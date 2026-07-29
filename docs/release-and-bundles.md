@@ -77,8 +77,8 @@ by a human in GitHub using a `v*` tag. The workflow:
 6. stages versioned asset filenames
 7. attaches only those prepared files to the existing GitHub Release
 
-For package version `0.3.1`, accepted examples are `v0.3.1` and `v0.3.1.2`.
-`v0.3.2` is rejected because it does not describe the checked-out package
+For package version `0.4.0`, accepted examples are `v0.4.0` and `v0.4.0.2`.
+`v0.3.3` is rejected because it does not describe the checked-out package
 version.
 
 ## Published Asset Names

@@ -32,7 +32,7 @@ committed. Local references and verification artifacts belong under
 
 Publishing a GitHub Release with a `v*` tag runs
 `.github/workflows/release-cli-runtime-bundles.yml`. The tag must match the
-`package.json` version, with an optional dot suffix such as `v0.3.1.2`.
+`package.json` version, with an optional dot suffix such as `v0.4.0.2`.
 
 The workflow builds and attaches:
 
