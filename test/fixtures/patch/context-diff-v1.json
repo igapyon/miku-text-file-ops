@@ -1,0 +1,104 @@
+{
+  "success": [
+    {
+      "name": "replace one line while preserving mixed newlines",
+      "source": "alpha\r\nbeta\nomega\r",
+      "diff": "@@\n alpha\n-beta\n+BETA\n omega\n",
+      "lineEnding": "preserve",
+      "expected": "alpha\r\nBETA\nomega\r",
+      "hunksApplied": 1,
+      "linesAdded": 1,
+      "linesRemoved": 1
+    },
+    {
+      "name": "insert between uniquely anchored lines",
+      "source": "alpha\nomega",
+      "diff": "@@\n alpha\n+beta\n omega\n",
+      "lineEnding": "preserve",
+      "expected": "alpha\nbeta\nomega",
+      "hunksApplied": 1,
+      "linesAdded": 1,
+      "linesRemoved": 0
+    },
+    {
+      "name": "append to a single line without a final newline",
+      "source": "alpha",
+      "diff": "@@\n alpha\n+beta\n",
+      "lineEnding": "preserve",
+      "expected": "alpha\nbeta",
+      "hunksApplied": 1,
+      "linesAdded": 1,
+      "linesRemoved": 0
+    },
+    {
+      "name": "explicit CRLF normalizes every result separator",
+      "source": "a\nb\n",
+      "diff": "@@\n-b\n+B\n",
+      "lineEnding": "crlf",
+      "expected": "a\r\nB\r\n",
+      "hunksApplied": 1,
+      "linesAdded": 1,
+      "linesRemoved": 1
+    },
+    {
+      "name": "multiple ordered non-overlapping hunks apply atomically",
+      "source": "a\nb\nc\nd\n",
+      "diff": "@@\n-a\n+A\n@@\n-d\n+D\n",
+      "lineEnding": "preserve",
+      "expected": "A\nb\nc\nD\n",
+      "hunksApplied": 2,
+      "linesAdded": 2,
+      "linesRemoved": 2
+    }
+  ],
+  "failure": [
+    {
+      "name": "missing final structural LF",
+      "source": "a\n",
+      "diff": "@@\n-a\n+A",
+      "code": "patch_syntax_error"
+    },
+    {
+      "name": "hunk without a change",
+      "source": "a\n",
+      "diff": "@@\n a\n",
+      "code": "patch_syntax_error"
+    },
+    {
+      "name": "addition without a source anchor",
+      "source": "",
+      "diff": "@@\n+new\n",
+      "code": "patch_requires_replace"
+    },
+    {
+      "name": "source context is absent",
+      "source": "a\n",
+      "diff": "@@\n-b\n+B\n",
+      "code": "patch_context_mismatch"
+    },
+    {
+      "name": "source context is ambiguous",
+      "source": "same\nsame\n",
+      "diff": "@@\n-same\n+changed\n",
+      "code": "patch_ambiguous"
+    },
+    {
+      "name": "hunks are out of source order",
+      "source": "a\nb\nc\n",
+      "diff": "@@\n-c\n+C\n@@\n-a\n+A\n",
+      "code": "patch_hunks_out_of_order"
+    },
+    {
+      "name": "hunks overlap in the original file",
+      "source": "a\nb\nc\n",
+      "diff": "@@\n a\n-b\n+B\n@@\n b\n-c\n+C\n",
+      "code": "patch_hunks_overlap"
+    },
+    {
+      "name": "contextual diff cannot produce zero logical lines",
+      "source": "only\n",
+      "diff": "@@\n-only\n",
+      "code": "patch_requires_replace"
+    }
+  ]
+}

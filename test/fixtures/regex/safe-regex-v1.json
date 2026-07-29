@@ -1,0 +1,167 @@
+{
+  "matching": [
+    {
+      "name": "Unicode literal substring",
+      "pattern": "初音ミク",
+      "caseSensitive": true,
+      "matches": ["歌声は初音ミクです"],
+      "misses": ["鏡音リン"]
+    },
+    {
+      "name": "dot consumes one Unicode scalar",
+      "pattern": "^A.B$",
+      "caseSensitive": true,
+      "matches": ["A🎵B", "AみB"],
+      "misses": ["AB", "AxyB"]
+    },
+    {
+      "name": "alternation and grouping",
+      "pattern": "^(cat|dog)s?$",
+      "caseSensitive": true,
+      "matches": ["cat", "cats", "dog", "dogs"],
+      "misses": ["bird", "catss"]
+    },
+    {
+      "name": "non-capturing group and counted repetition",
+      "pattern": "^(?:ab){2,3}$",
+      "caseSensitive": true,
+      "matches": ["abab", "ababab"],
+      "misses": ["ab", "abababab"]
+    },
+    {
+      "name": "lazy repetition is accepted",
+      "pattern": "^a+?$",
+      "caseSensitive": true,
+      "matches": ["a", "aaaa"],
+      "misses": ["", "aaab"]
+    },
+    {
+      "name": "positive and negated character classes",
+      "pattern": "^[A-C][^0-9]$",
+      "caseSensitive": true,
+      "matches": ["A!", "Cみ"],
+      "misses": ["D!", "A1"]
+    },
+    {
+      "name": "ASCII shorthand classes and word boundaries",
+      "pattern": "\\b\\w+\\s\\d+\\b",
+      "caseSensitive": true,
+      "matches": ["id 42", "(id 42)"],
+      "misses": ["識別子 42", "id-42"]
+    },
+    {
+      "name": "hexadecimal scalar escapes",
+      "pattern": "^\\x41\\x{1F3B5}$",
+      "caseSensitive": true,
+      "matches": ["A🎵"],
+      "misses": ["A音"]
+    },
+    {
+      "name": "Unicode simple case folding handles Greek sigma",
+      "pattern": "^Σ$",
+      "caseSensitive": false,
+      "matches": ["Σ", "σ", "ς"],
+      "misses": ["S"]
+    },
+    {
+      "name": "Unicode simple case folding handles Kelvin sign",
+      "pattern": "^[a-z]+$",
+      "caseSensitive": false,
+      "matches": ["kelvin", "KELVIN"],
+      "misses": ["温度"]
+    },
+    {
+      "name": "case-sensitive mode does not fold",
+      "pattern": "^Miku$",
+      "caseSensitive": true,
+      "matches": ["Miku"],
+      "misses": ["MIKU", "miku"]
+    },
+    {
+      "name": "matching performs no Unicode normalization",
+      "pattern": "^ü$",
+      "caseSensitive": false,
+      "matches": ["Ü", "ü"],
+      "misses": ["ü"]
+    },
+    {
+      "name": "an expression may match an empty logical line",
+      "pattern": "^$",
+      "caseSensitive": true,
+      "matches": [""],
+      "misses": ["x"]
+    }
+  ],
+  "invalid": [
+    {
+      "name": "lookahead",
+      "pattern": "a(?=b)",
+      "code": "regex_feature_not_supported"
+    },
+    {
+      "name": "backreference",
+      "pattern": "(a)\\1",
+      "code": "regex_feature_not_supported"
+    },
+    {
+      "name": "named group",
+      "pattern": "(?<name>a)",
+      "code": "regex_feature_not_supported"
+    },
+    {
+      "name": "inline flag",
+      "pattern": "(?i:a)",
+      "code": "regex_feature_not_supported"
+    },
+    {
+      "name": "possessive repetition",
+      "pattern": "a++",
+      "code": "regex_feature_not_supported"
+    },
+    {
+      "name": "atomic group",
+      "pattern": "(?>a)",
+      "code": "regex_feature_not_supported"
+    },
+    {
+      "name": "Unicode property class",
+      "pattern": "\\p{Greek}",
+      "code": "regex_feature_not_supported"
+    },
+    {
+      "name": "byte-oriented matching",
+      "pattern": "\\C",
+      "code": "regex_feature_not_supported"
+    },
+    {
+      "name": "newline escape",
+      "pattern": "\\n",
+      "code": "regex_feature_not_supported"
+    },
+    {
+      "name": "unclosed group",
+      "pattern": "(abc",
+      "code": "regex_syntax_error"
+    },
+    {
+      "name": "descending character range",
+      "pattern": "[z-a]",
+      "code": "regex_syntax_error"
+    },
+    {
+      "name": "invalid hexadecimal scalar",
+      "pattern": "\\x{110000}",
+      "code": "regex_syntax_error"
+    },
+    {
+      "name": "counted repetition above the v1 limit",
+      "pattern": "a{1001}",
+      "code": "regex_resource_limit"
+    },
+    {
+      "name": "compiled NFA above the fixed state limit",
+      "pattern": "(a{1000}){1000}",
+      "code": "regex_resource_limit"
+    }
+  ]
+}
