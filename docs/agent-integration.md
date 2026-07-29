@@ -256,6 +256,10 @@ The Agent Skill uses progressive disclosure:
 
 Packaging requirements:
 
+- Consume a smoke-tested standalone CLI bundle produced from the authoritative
+  main-application core.
+- Record or verify the bundled product version instead of inferring it from an
+  Agent Skill package version.
 - Keep the frontmatter description at or below 100 words.
 - Target at most 200 lines for `SKILL.md`; 500 lines is a hard review
   threshold, not a target.
@@ -313,8 +317,20 @@ The skill should provide:
 - revision handoff examples
 - explicit fallback rules
 
+The executable's global `--help` output duplicates this essential invocation
+contract intentionally. It is the self-contained fallback for an agent that
+can execute the CLI but does not have the Agent Skill references in context.
+It includes the five request shapes, examples, revision handoff, structured
+response handling, and exit-code interpretation.
+
 The skill must not require the agent to search the repository broadly for a jar,
 JavaScript bundle, or executable on every invocation.
+
+The main application publishes the standalone CLI bundle separately from its
+importable runtime bundle and source archive. The Agent Skill embeds or
+otherwise selects the CLI artifact; it does not substitute the importable
+runtime bundle as an executable. Distribution details are defined in
+[Release and bundles](./release-and-bundles.md).
 
 ## CLI and MCP Roles
 

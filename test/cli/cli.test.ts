@@ -12,8 +12,61 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
   CLI_EXIT,
+  PRODUCT_VERSION,
   executeCli,
+  validateCreateRequest,
+  validateDeleteRequest,
+  validateReadRequest,
+  validateSearchRequest,
+  validateUpdateRequest,
 } from "../../src/index.js";
+
+test("CLI metadata options do not require stdin", async () => {
+  const version = await executeCli(
+    ["--version"],
+    new Uint8Array(),
+    process.cwd(),
+  );
+  const help = await executeCli(
+    ["--help"],
+    new Uint8Array(),
+    process.cwd(),
+  );
+
+  assert.equal(version.exitCode, CLI_EXIT.success);
+  assert.equal(
+    Buffer.from(version.stdout).toString("utf8"),
+    `${PRODUCT_VERSION}\n`,
+  );
+  const helpText = Buffer.from(help.stdout).toString("utf8");
+  assert.equal(help.exitCode, CLI_EXIT.success);
+  assert.equal(help.stderr.byteLength, 0);
+  assert.equal(helpText.endsWith("\n"), true);
+  for (const section of [
+    "USAGE",
+    "TRANSPORT AND PATH RULES",
+    "SEARCH REQUEST",
+    "READ REQUEST",
+    "CREATE REQUEST",
+    "UPDATE REQUEST",
+    "DELETE REQUEST",
+    "OPTIONAL LIMITS",
+    "JSON RESPONSE",
+    "EXIT CODES",
+    "MINIMAL AGENT WORKFLOW",
+  ]) {
+    assert.match(helpText, new RegExp(section, "u"));
+  }
+  assert.match(helpText, /expectedRevision/u);
+  assert.match(helpText, /remainingRanges/u);
+  assert.match(helpText, /stale_revision/u);
+  assert.match(helpText, /Recommended for agents/u);
+  assert.match(helpText, /\.gitignore/u);
+  assert.match(helpText, /stable machine contract/u);
+  assert.match(helpText, /maxResultBytes:32768/u);
+  assert.match(helpText, /mixed.*logical-line position/su);
+  validateRenderedHelpExamples(helpText);
+});
 
 test("--json emits exactly the canonical measured response", async (context) => {
   const root = await createRoot(context);
@@ -161,6 +214,47 @@ test("the executable keeps machine-mode stdout protocol-pure", async (
 
 function jsonBytes(value: unknown): Uint8Array {
   return Buffer.from(JSON.stringify(value), "utf8");
+}
+
+function validateRenderedHelpExamples(helpText: string): void {
+  const pattern =
+    /^miku-text-file-ops --root \. --json (search|read|create|update|delete) <<'JSON'\n([\s\S]*?)\nJSON$/gmu;
+  const examples = [...helpText.matchAll(pattern)];
+  assert.equal(examples.length, 6);
+  const seen = new Set<string>();
+
+  for (const match of examples) {
+    const operation = match[1] as
+      | "search"
+      | "read"
+      | "create"
+      | "update"
+      | "delete";
+    const request = JSON.parse(match[2] as string);
+    seen.add(operation);
+    switch (operation) {
+      case "search":
+        validateSearchRequest(request);
+        break;
+      case "read":
+        validateReadRequest(request);
+        break;
+      case "create":
+        validateCreateRequest(request);
+        break;
+      case "update":
+        validateUpdateRequest(request);
+        break;
+      case "delete":
+        validateDeleteRequest(request);
+        break;
+    }
+  }
+
+  assert.deepEqual(
+    [...seen].sort(),
+    ["create", "delete", "read", "search", "update"],
+  );
 }
 
 async function createRoot(context: test.TestContext): Promise<string> {

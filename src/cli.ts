@@ -16,6 +16,8 @@ import {
 import { executeRead } from "./core/read.js";
 import { executeSearch } from "./core/search.js";
 import { Workspace } from "./fs/workspace.js";
+import { renderHelp } from "./help.js";
+import { PRODUCT_VERSION } from "./metadata.js";
 import { ContextDiffError } from "./patch/context-diff.js";
 import { SafeRegexError } from "./regex/safe-regex.js";
 import {
@@ -63,6 +65,11 @@ export async function executeCli(
   stdin: Uint8Array,
   cwd: string,
 ): Promise<CliExecution> {
+  const metadata = metadataExecution(args);
+  if (metadata !== undefined) {
+    return metadata;
+  }
+
   let parsed: ParsedArguments;
   try {
     parsed = parseArguments(args, cwd);
@@ -88,6 +95,29 @@ export async function executeCli(
       isRequestFailure(error),
     );
   }
+}
+
+function metadataExecution(
+  args: readonly string[],
+): CliExecution | undefined {
+  if (args.length !== 1) {
+    return undefined;
+  }
+  if (args[0] === "--version") {
+    return successfulText(`${PRODUCT_VERSION}\n`);
+  }
+  if (args[0] === "--help" || args[0] === "-h") {
+    return successfulText(renderHelp());
+  }
+  return undefined;
+}
+
+function successfulText(text: string): CliExecution {
+  return {
+    exitCode: CLI_EXIT.success,
+    stdout: Buffer.from(text, "utf8"),
+    stderr: new Uint8Array(),
+  };
 }
 
 function parseArguments(

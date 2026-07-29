@@ -7,6 +7,7 @@ export * from "./core/search.js";
 export * from "./core/mutate.js";
 export * from "./fs/glob.js";
 export * from "./fs/workspace.js";
+export * from "./metadata.js";
 export * from "./patch/context-diff.js";
 export * from "./regex/safe-regex.js";
 export * from "./regex/simple-case-folding-17.js";
