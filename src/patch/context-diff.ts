@@ -37,6 +37,10 @@ export interface AppliedContextDiff {
   linesRemoved: number;
 }
 
+export interface AppliedContextDiffWithSources extends AppliedContextDiff {
+  lineSources: readonly (number | null)[];
+}
+
 interface LocatedHunk {
   hunk: ContextDiffHunk;
   hunkIndex: number;
@@ -49,6 +53,7 @@ interface OutputLine {
   text: string;
   newline: NewlineSequence | null;
   hunkIndex?: number;
+  sourceLineIndex?: number;
 }
 
 export class ContextDiffError extends Error {
@@ -130,6 +135,16 @@ export function applyContextDiff(
   diff: string | ParsedContextDiff,
   lineEnding: PatchLineEnding = "preserve",
 ): AppliedContextDiff {
+  const { lineSources: _lineSources, ...result } =
+    applyContextDiffWithSources(sourceText, diff, lineEnding);
+  return result;
+}
+
+export function applyContextDiffWithSources(
+  sourceText: string,
+  diff: string | ParsedContextDiff,
+  lineEnding: PatchLineEnding = "preserve",
+): AppliedContextDiffWithSources {
   const patch = typeof diff === "string" ? parseContextDiff(diff) : diff;
   const source = parseLogicalText(sourceText);
   const preferredFileNewline = dominantNewline(source.lines);
@@ -164,6 +179,7 @@ export function applyContextDiff(
             text: original.text,
             newline: original.newline,
             hunkIndex: locatedHunk.hunkIndex,
+            sourceLineIndex: hunkSourceIndex,
           });
           hunkSourceIndex += 1;
           break;
@@ -208,6 +224,7 @@ export function applyContextDiff(
     hunksApplied: located.length,
     linesAdded,
     linesRemoved,
+    lineSources: output.map((line) => line.sourceLineIndex ?? null),
   };
 }
 
@@ -415,7 +432,11 @@ function appendOriginalRange(
   for (let index = start; index < end; index += 1) {
     const line = source[index];
     if (line !== undefined) {
-      output.push({ text: line.text, newline: line.newline });
+      output.push({
+        text: line.text,
+        newline: line.newline,
+        sourceLineIndex: index,
+      });
     }
   }
 }

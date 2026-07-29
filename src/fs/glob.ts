@@ -124,18 +124,29 @@ function globToRegexSource(glob: string): string {
       continue;
     }
     if (scalar === "*") {
-      if (scalars[index + 1] === "*") {
-        while (scalars[index + 1] === "*") {
-          index += 1;
-        }
-        if (scalars[index + 1] === "/") {
+      let runEnd = index;
+      while (scalars[runEnd + 1] === "*") {
+        runEnd += 1;
+      }
+      const runLength = runEnd - index + 1;
+      const previous = scalars[index - 1];
+      const next = scalars[runEnd + 1];
+      const gitStyleDoubleStar =
+        runLength === 2 &&
+        (index === 0 || previous === "/") &&
+        (next === undefined || next === "/");
+
+      if (gitStyleDoubleStar) {
+        if (next === "/") {
           output += "(?:.*/)?";
-          index += 1;
+          index = runEnd + 1;
         } else {
           output += ".*";
+          index = runEnd;
         }
       } else {
         output += "[^/]*";
+        index = runEnd;
       }
       continue;
     }

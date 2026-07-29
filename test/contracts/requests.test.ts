@@ -32,6 +32,37 @@ test("content summary applies syntax, matching, and facet defaults", () => {
   assert.deepEqual(request.facets, ["extension", "topLevelPath"]);
 });
 
+test("public request strings reject lone surrogates", () => {
+  assert.throws(
+    () =>
+      validateSearchRequest({
+        mode: "content",
+        pattern: "\uD800",
+        syntax: "literal",
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof RequestValidationError);
+      assert.equal(error.diagnostics[0]?.code, "invalid_unicode_scalar");
+      assert.equal(error.diagnostics[0]?.details?.["characterOffset"], 0);
+      return true;
+    },
+  );
+
+  assert.throws(
+    () =>
+      validateCreateRequest({
+        path: "created.txt",
+        content: "A\uD800B",
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof RequestValidationError);
+      assert.equal(error.diagnostics[0]?.code, "invalid_unicode_scalar");
+      assert.equal(error.diagnostics[0]?.details?.["field"], "content");
+      return true;
+    },
+  );
+});
+
 test("path mode rejects matches projection", () => {
   assertValidationCode(
     () =>
@@ -77,6 +108,26 @@ test("search rejects unknown fields and unknown limits", () => {
         limits: { maxFilseVisited: 10 },
       }),
     "unknown_field",
+  );
+});
+
+test("search rejects malformed request globs during validation", () => {
+  assertValidationCode(
+    () =>
+      validateSearchRequest({
+        mode: "paths",
+        include: ["["],
+      }),
+    "invalid_glob",
+  );
+  assertValidationCode(
+    () =>
+      validateSearchRequest({
+        mode: "content",
+        pattern: "TODO",
+        exclude: ["[z-a]"],
+      }),
+    "invalid_glob",
   );
 });
 

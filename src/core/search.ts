@@ -6,7 +6,11 @@ import {
   validateSearchRequest,
 } from "../contracts/requests.js";
 import {
+  applyLimitCeilings,
+} from "../contracts/validation.js";
+import {
   type Diagnostic,
+  type Limits,
   type ResultEnvelope,
 } from "../contracts/types.js";
 import {
@@ -95,6 +99,7 @@ export type SearchResultRecord =
 
 export interface SearchCoreOptions {
   legacyFallback?: "windows-31j";
+  limitCeilings?: Limits;
   repositoryEncoding?: (
     path: string,
   ) => CanonicalEncoding | undefined;
@@ -105,6 +110,7 @@ interface SearchState {
   records: SearchResultRecord[];
   diagnostics: Diagnostic[];
   diagnosticsOmitted: number;
+  diagnosticsOmittedByCode: Record<string, number>;
   reasons: Set<string>;
   filesVisited: number;
   bytesRead: number;
@@ -120,29 +126,52 @@ export async function executeSearch(
   input: unknown,
   options: SearchCoreOptions = {},
 ): Promise<ResultEnvelope<SearchResultRecord>> {
-  const request = validateSearchRequest(input);
+  const validated = validateSearchRequest(input);
+  const clamped = applyLimitCeilings(
+    validated.effectiveLimits,
+    options.limitCeilings,
+  );
+  const request: ValidatedSearchRequest = {
+    ...validated,
+    effectiveLimits: clamped.effectiveLimits,
+  };
   const scan = await workspace.scan({
     include: request.include,
     exclude: request.exclude,
+    maxFiles: request.effectiveLimits.maxFilesVisited,
   });
   const state: SearchState = {
     request,
     records: [],
     diagnostics: [],
     diagnosticsOmitted: 0,
+    diagnosticsOmittedByCode: {},
     reasons: new Set(),
     filesVisited: 0,
     bytesRead: 0,
   };
+  for (const diagnostic of clamped.diagnostics) {
+    addDiagnostic(state, diagnostic);
+    state.reasons.add(diagnostic.code);
+  }
   for (const diagnostic of scan.diagnostics) {
     addDiagnostic(state, diagnostic);
     state.reasons.add(diagnostic.code);
   }
+  if (scan.truncated) {
+    state.reasons.add("file_visit_limit");
+  }
 
   if (request.mode === "paths") {
-    executePathSearch(state, scan.files);
+    executePathSearch(state, scan.files, !scan.truncated);
   } else {
-    await executeContentSearch(state, scan.files, request, options);
+    await executeContentSearch(
+      state,
+      scan.files,
+      request,
+      options,
+      !scan.truncated,
+    );
   }
   enforceSearchResultByteBudget(state);
   return buildSearchEnvelope(state);
@@ -151,17 +180,15 @@ export async function executeSearch(
 function executePathSearch(
   state: SearchState,
   candidates: readonly WorkspaceFile[],
+  discoveryComplete: boolean,
 ): void {
   const request = state.request;
   if (request.mode !== "paths") {
     throw new Error("Path request expected");
   }
-  const visited = candidates.slice(
-    0,
-    request.effectiveLimits.maxFilesVisited,
-  );
+  const visited = candidates;
   state.filesVisited = visited.length;
-  let scanComplete = visited.length === candidates.length;
+  let scanComplete = discoveryComplete;
   if (!scanComplete) {
     state.reasons.add("file_visit_limit");
   }
@@ -214,11 +241,12 @@ async function executeContentSearch(
   candidates: readonly WorkspaceFile[],
   request: ValidatedContentSearchRequest,
   options: SearchCoreOptions,
+  discoveryComplete: boolean,
 ): Promise<void> {
   const matchesLine = buildLineMatcher(request);
   const projectionRecords: SearchResultRecord[] = [];
   const matchedForFacets: Array<{ file: WorkspaceFile; matches: number }> = [];
-  let scanComplete = true;
+  let scanComplete = discoveryComplete;
   let filesDecoded = 0;
   let filesSkipped = 0;
   let filesMatchedObserved = 0;
@@ -309,13 +337,30 @@ async function executeContentSearch(
         request.beforeContext,
         request.afterContext,
       );
-      trimMatchToTextBudget(
+      const contextTrimmed = trimMatchToTextBudget(
         record,
         request.effectiveLimits.maxTextCharsReturned - textCharsReturned,
       );
+      if (contextTrimmed) {
+        state.reasons.add("text_char_limit");
+      }
       const recordChars = matchRecordTextChars(record);
       if (recordChars > request.effectiveLimits.maxTextCharsReturned - textCharsReturned) {
         state.reasons.add("text_char_limit");
+        scanComplete = false;
+        matchesExact = false;
+        stopTraversal = true;
+        break;
+      }
+      if (
+        !canAdmitSearchRecord(
+          state,
+          projectionRecords,
+          record,
+          request,
+        )
+      ) {
+        state.reasons.add("result_byte_limit");
         scanComplete = false;
         matchesExact = false;
         stopTraversal = true;
@@ -337,12 +382,26 @@ async function executeContentSearch(
           scanComplete = false;
           stopTraversal = true;
         } else {
-          projectionRecords.push({
+          const record: SearchFileRecord = {
             type: "file",
             path: file.path,
             rawBytes: file.rawBytes,
             firstMatchLine: firstMatchLine as number,
-          });
+          };
+          if (
+            !canAdmitSearchRecord(
+              state,
+              projectionRecords,
+              record,
+              request,
+            )
+          ) {
+            state.reasons.add("result_byte_limit");
+            scanComplete = false;
+            stopTraversal = true;
+          } else {
+            projectionRecords.push(record);
+          }
         }
       }
     }
@@ -436,19 +495,57 @@ function buildMatchRecord(
 function trimMatchToTextBudget(
   record: MatchRecord,
   remaining: number,
-): void {
+): boolean {
+  let trimmed = false;
   while (
     matchRecordTextChars(record) > remaining &&
     record.afterContext.length > 0
   ) {
     record.afterContext = record.afterContext.slice(0, -1);
+    trimmed = true;
   }
   while (
     matchRecordTextChars(record) > remaining &&
     record.beforeContext.length > 0
   ) {
     record.beforeContext = record.beforeContext.slice(1);
+    trimmed = true;
   }
+  return trimmed;
+}
+
+function canAdmitSearchRecord(
+  state: SearchState,
+  admitted: readonly SearchResultRecord[],
+  candidate: SearchResultRecord,
+  request: ValidatedContentSearchRequest,
+): boolean {
+  const summary: SearchSummaryRecord = {
+    type: "searchSummary",
+    mode: "content",
+    scanComplete: false,
+    matchUnit: "logicalLine",
+    filesVisited: state.filesVisited,
+    filesDecoded: state.filesVisited,
+    filesSkipped: 0,
+    filesMatched: null,
+    filesMatchedAtLeast: 0,
+    matchesFound: null,
+    matchesFoundAtLeast: 0,
+    filesReturned: [...admitted, candidate].filter(
+      (record) => record.type === "file",
+    ).length,
+    matchesReturned: [...admitted, candidate].filter(
+      (record) => record.type === "match",
+    ).length,
+  };
+  const previous = state.records;
+  state.records = [summary, ...admitted, candidate];
+  const fits =
+    serializeCanonicalEnvelope(buildSearchEnvelope(state)).byteLength <=
+    request.effectiveLimits.maxResultBytes;
+  state.records = previous;
+  return fits;
 }
 
 function matchRecordTextChars(record: MatchRecord): number {
@@ -542,8 +639,7 @@ function enforceSearchResultByteBudget(state: SearchState): void {
       continue;
     }
     if (state.diagnostics.length > 0) {
-      state.diagnostics.pop();
-      state.diagnosticsOmitted += 1;
+      omitDiagnostic(state, state.diagnostics.pop() as Diagnostic);
       continue;
     }
     throw new Error("Minimal SEARCH envelope exceeds maxResultBytes");
@@ -580,6 +676,7 @@ function buildSearchEnvelope(
     results: state.records,
     diagnostics: state.diagnostics,
     diagnosticsOmitted: state.diagnosticsOmitted,
+    diagnosticsOmittedByCode: state.diagnosticsOmittedByCode,
     effectiveLimits: state.request.effectiveLimits,
     usage: {
       filesVisited: state.filesVisited,
@@ -595,9 +692,15 @@ function addDiagnostic(state: SearchState, diagnostic: Diagnostic): void {
   ) {
     state.diagnostics.push(diagnostic);
   } else {
-    state.diagnosticsOmitted += 1;
+    omitDiagnostic(state, diagnostic);
     state.reasons.add("diagnostic_limit");
   }
+}
+
+function omitDiagnostic(state: SearchState, diagnostic: Diagnostic): void {
+  state.diagnosticsOmitted += 1;
+  state.diagnosticsOmittedByCode[diagnostic.code] =
+    (state.diagnosticsOmittedByCode[diagnostic.code] ?? 0) + 1;
 }
 
 function searchDiagnostic(path: string, error: unknown): Diagnostic {
@@ -607,6 +710,12 @@ function searchDiagnostic(path: string, error: unknown): Diagnostic {
       code: error.code,
       message: error.message,
       path,
+      ...(error.byteOffset === undefined
+        ? {}
+        : { byteOffset: error.byteOffset }),
+      ...(error.encoding === undefined
+        ? {}
+        : { details: { encoding: error.encoding } }),
     };
   }
   return {

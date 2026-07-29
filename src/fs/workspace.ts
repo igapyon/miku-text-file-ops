@@ -28,11 +28,20 @@ export interface WorkspaceFile {
 export interface WorkspaceScanOptions {
   include?: readonly string[];
   exclude?: readonly string[];
+  maxFiles?: number;
 }
 
 export interface WorkspaceScanResult {
   files: readonly WorkspaceFile[];
   diagnostics: readonly Diagnostic[];
+  truncated: boolean;
+}
+
+interface ScanState {
+  files: WorkspaceFile[];
+  diagnostics: Diagnostic[];
+  maximumFiles: number;
+  truncated: boolean;
 }
 
 export type WorkspaceBoundaryErrorCode =
@@ -158,18 +167,25 @@ export class Workspace {
   async scan(options: WorkspaceScanOptions = {}): Promise<WorkspaceScanResult> {
     const includes = (options.include ?? []).map(compileRequestGlob);
     const excludes = (options.exclude ?? []).map(compileRequestGlob);
-    const files: WorkspaceFile[] = [];
-    const diagnostics: Diagnostic[] = [];
+    const state: ScanState = {
+      files: [],
+      diagnostics: [],
+      maximumFiles: options.maxFiles ?? Number.MAX_SAFE_INTEGER,
+      truncated: false,
+    };
 
     await this.#scanDirectory(
       "",
       [],
       includes,
       excludes,
-      files,
-      diagnostics,
+      state,
     );
-    return { files, diagnostics };
+    return {
+      files: state.files,
+      diagnostics: state.diagnostics,
+      truncated: state.truncated,
+    };
   }
 
   async #walkExisting(path: string): Promise<string> {
@@ -206,8 +222,7 @@ export class Workspace {
     inheritedRules: readonly GitIgnoreRule[],
     includes: readonly CompiledGlob[],
     excludes: readonly CompiledGlob[],
-    files: WorkspaceFile[],
-    diagnostics: Diagnostic[],
+    state: ScanState,
   ): Promise<void> {
     const absoluteDirectory =
       directoryPath.length === 0
@@ -217,7 +232,7 @@ export class Workspace {
     try {
       entries = await readdir(absoluteDirectory, { withFileTypes: true });
     } catch (error) {
-      diagnostics.push(sourceDiagnostic(directoryPath, error));
+      state.diagnostics.push(sourceDiagnostic(directoryPath, error));
       return;
     }
     entries.sort((left, right) => compareUnicodeScalars(left.name, right.name));
@@ -226,11 +241,15 @@ export class Workspace {
       directoryPath,
       absoluteDirectory,
       entries.some((entry) => entry.name === ".gitignore"),
-      diagnostics,
+      state.diagnostics,
     );
     const rules = [...inheritedRules, ...localRules];
 
     for (const entry of entries) {
+      if (state.files.length >= state.maximumFiles) {
+        state.truncated = true;
+        break;
+      }
       if (directoryPath.length === 0 && entry.name === ".git") {
         continue;
       }
@@ -244,7 +263,7 @@ export class Workspace {
       try {
         status = await lstat(absolutePath);
       } catch (error) {
-        diagnostics.push(sourceDiagnostic(path, error));
+        state.diagnostics.push(sourceDiagnostic(path, error));
         continue;
       }
       if (status.isSymbolicLink()) {
@@ -258,9 +277,9 @@ export class Workspace {
             rules,
             includes,
             excludes,
-            files,
-            diagnostics,
+            state,
           );
+          if (state.truncated) break;
         }
         continue;
       }
@@ -277,7 +296,7 @@ export class Workspace {
         continue;
       }
 
-      files.push({
+      state.files.push({
         path,
         absolutePath,
         rawBytes: status.size,

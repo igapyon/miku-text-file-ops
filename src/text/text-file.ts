@@ -44,16 +44,19 @@ export type TextFileErrorCode =
 export class TextFileError extends Error {
   readonly code: TextFileErrorCode;
   readonly encoding: CanonicalEncoding | undefined;
+  readonly byteOffset: number | undefined;
 
   constructor(
     code: TextFileErrorCode,
     message: string,
     encoding?: CanonicalEncoding,
+    byteOffset?: number,
   ) {
     super(message);
     this.name = "TextFileError";
     this.code = code;
     this.encoding = encoding;
+    this.byteOffset = byteOffset;
   }
 }
 
@@ -105,6 +108,10 @@ export function decodeTextFile(
         throw new TextFileError(
           "encoding_undetermined",
           "Input has no recognized BOM and is not valid UTF-8",
+          "utf-8",
+          error instanceof TextDecodingError
+            ? error.byteOffset
+            : undefined,
         );
       }
       encoding = options.legacyFallback;
@@ -122,7 +129,12 @@ export function decodeTextFile(
     );
   } catch (error) {
     if (error instanceof TextDecodingError) {
-      throw new TextFileError("decode_error", error.message, encoding);
+      throw new TextFileError(
+        "decode_error",
+        error.message,
+        encoding,
+        error.byteOffset,
+      );
     }
     throw error;
   }

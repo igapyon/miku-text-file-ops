@@ -19,6 +19,7 @@ This README is an index. It does not define product behavior by itself.
 | [`agent-integration.md`](./agent-integration.md) | Accepted adapter design | Agent Skill discovery, trigger conditions, and CLI routing |
 | [`implementation-strategy.md`](./implementation-strategy.md) | Accepted non-normative strategy | Complete-scratch implementation and repository strategy |
 | [`release-and-bundles.md`](./release-and-bundles.md) | Accepted operational design | Reproducible CLI/runtime bundles and GitHub Release asset workflow |
+| [`conformance-corpus.md`](./conformance-corpus.md) | Executable contract | Runtime-independent byte-level fixtures and runner requirements |
 | [`notes/search-scaling-and-artifact-delivery.md`](./notes/search-scaling-and-artifact-delivery.md) | Work in progress | High-cardinality search refinement and out-of-band result artifacts |
 | [`notes/environment-capability-cache.md`](./notes/environment-capability-cache.md) | Work in progress | Environment-specific capability probing and failure memory |
 

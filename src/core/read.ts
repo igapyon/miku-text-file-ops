@@ -6,7 +6,11 @@ import {
   validateReadRequest,
 } from "../contracts/requests.js";
 import {
+  applyLimitCeilings,
+} from "../contracts/validation.js";
+import {
   type Diagnostic,
+  type Limits,
   type ResultEnvelope,
 } from "../contracts/types.js";
 import { Workspace } from "../fs/workspace.js";
@@ -54,6 +58,7 @@ export interface ReadResultRecord {
 
 export interface ReadCoreOptions {
   legacyFallback?: "windows-31j";
+  limitCeilings?: Limits;
   repositoryEncoding?: (
     path: string,
   ) => CanonicalEncoding | undefined;
@@ -72,6 +77,7 @@ interface ReadState {
   works: ReadWork[];
   diagnostics: Diagnostic[];
   diagnosticsOmitted: number;
+  diagnosticsOmittedByCode: Record<string, number>;
   reasons: Set<string>;
   itemsProcessed: number;
   itemsSkipped: number;
@@ -83,17 +89,30 @@ export async function executeRead(
   input: unknown,
   options: ReadCoreOptions = {},
 ): Promise<ResultEnvelope<ReadResultRecord>> {
-  const request = validateReadRequest(input);
+  const validated = validateReadRequest(input);
+  const clamped = applyLimitCeilings(
+    validated.effectiveLimits,
+    options.limitCeilings,
+  );
+  const request: ValidatedReadRequest = {
+    ...validated,
+    effectiveLimits: clamped.effectiveLimits,
+  };
   const state: ReadState = {
     request,
     works: [],
     diagnostics: [],
     diagnosticsOmitted: 0,
+    diagnosticsOmittedByCode: {},
     reasons: new Set(),
     itemsProcessed: 0,
     itemsSkipped: 0,
     nextItemIndex: undefined,
   };
+  for (const diagnostic of clamped.diagnostics) {
+    addDiagnostic(state, diagnostic);
+    state.reasons.add(diagnostic.code);
+  }
   const maximumItems = request.effectiveLimits.maxItems;
   const processCount = Math.min(request.items.length, maximumItems);
   if (request.items.length > processCount) {
@@ -104,13 +123,6 @@ export async function executeRead(
 
   let textCharsRemaining = request.effectiveLimits.maxTextCharsReturned;
   for (let itemIndex = 0; itemIndex < processCount; itemIndex += 1) {
-    if (textCharsRemaining === 0) {
-      state.reasons.add("text_char_limit");
-      state.itemsSkipped += processCount - itemIndex;
-      state.nextItemIndex ??= itemIndex;
-      break;
-    }
-
     const item = request.items[itemIndex] as ValidatedReadItem;
     try {
       const absolutePath = await workspace.resolveExistingFile(item.path);
@@ -296,7 +308,7 @@ function enforceResultByteBudget(state: ReadState): void {
       .reverse()
       .find((candidate) => candidate.returned !== undefined);
     if (work !== undefined) {
-      trimReturnedRange(work);
+      trimReturnedRange(work, state);
       continue;
     }
     if (state.works.length > 0) {
@@ -310,17 +322,24 @@ function enforceResultByteBudget(state: ReadState): void {
       continue;
     }
     if (state.diagnostics.length > 0) {
-      state.diagnostics.pop();
-      state.diagnosticsOmitted += 1;
+      omitDiagnostic(state, state.diagnostics.pop() as Diagnostic);
       continue;
     }
     throw new Error("Minimal READ envelope exceeds maxResultBytes");
   }
 }
 
-function trimReturnedRange(work: ReadWork): void {
+function trimReturnedRange(work: ReadWork, state: ReadState): void {
   const returned = work.returned as LineRange;
   if (returned.startLine === returned.endLine) {
+    addDiagnostic(state, {
+      severity: "warning",
+      code: "line_too_large",
+      message: `Logical line ${returned.startLine} cannot fit the result byte budget`,
+      path: work.record.path,
+      line: returned.startLine,
+    });
+    state.reasons.add("line_too_large");
     work.returned = undefined;
     delete work.record.returnedRange;
   } else if (work.direction === "prefix") {
@@ -364,6 +383,7 @@ function buildEnvelope(
     results: records,
     diagnostics: state.diagnostics,
     diagnosticsOmitted: state.diagnosticsOmitted,
+    diagnosticsOmittedByCode: state.diagnosticsOmittedByCode,
     effectiveLimits: state.request.effectiveLimits,
     usage: {
       itemsRequested: state.request.items.length,
@@ -469,9 +489,15 @@ function addDiagnostic(state: ReadState, diagnostic: Diagnostic): void {
   ) {
     state.diagnostics.push(diagnostic);
   } else {
-    state.diagnosticsOmitted += 1;
+    omitDiagnostic(state, diagnostic);
     state.reasons.add("diagnostic_limit");
   }
+}
+
+function omitDiagnostic(state: ReadState, diagnostic: Diagnostic): void {
+  state.diagnosticsOmitted += 1;
+  state.diagnosticsOmittedByCode[diagnostic.code] =
+    (state.diagnosticsOmittedByCode[diagnostic.code] ?? 0) + 1;
 }
 
 function readDiagnostic(path: string, error: unknown): Diagnostic {
@@ -481,6 +507,9 @@ function readDiagnostic(path: string, error: unknown): Diagnostic {
       code: error.code,
       message: error.message,
       path,
+      ...(error.byteOffset === undefined
+        ? {}
+        : { byteOffset: error.byteOffset }),
       ...(error.encoding === undefined
         ? {}
         : { details: { encoding: error.encoding } }),

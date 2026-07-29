@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  mkdir,
   mkdtemp,
   readFile,
   rm,
@@ -13,6 +14,7 @@ import test from "node:test";
 import {
   CLI_EXIT,
   PRODUCT_VERSION,
+  encodeStrict,
   executeCli,
   validateCreateRequest,
   validateDeleteRequest,
@@ -108,6 +110,33 @@ test("request validation failures use exit 2 and a failed JSON envelope", async 
   assert.equal(response.diagnostics[0].code, "unknown_field");
 });
 
+test("CLI bounds and aggregates large validation failures", async (context) => {
+  const root = await createRoot(context);
+  const request: Record<string, unknown> = { mode: "paths" };
+  for (let index = 0; index < 2_000; index += 1) {
+    request[`unknown_${index.toString().padStart(4, "0")}`] = true;
+  }
+  const execution = await executeCli(
+    ["search", "--root", root, "--json"],
+    jsonBytes(request),
+    root,
+  );
+  const response = JSON.parse(Buffer.from(execution.stdout).toString("utf8"));
+
+  assert.equal(execution.exitCode, CLI_EXIT.requestError);
+  assert.ok(execution.stdout.byteLength <= 32_768);
+  assert.ok(response.diagnostics.length <= 50);
+  assert.equal(response.diagnosticSummary.returned, response.diagnostics.length);
+  assert.equal(
+    response.diagnosticSummary.returned +
+      response.diagnosticSummary.omitted,
+    2_000,
+  );
+  assert.deepEqual(response.diagnosticSummary.byCode, [
+    { code: "unknown_field", count: 2_000 },
+  ]);
+});
+
 test("safe-regex syntax failures are request errors", async (context) => {
   const root = await createRoot(context);
   const execution = await executeCli(
@@ -129,6 +158,70 @@ test("safe-regex syntax failures are request errors", async (context) => {
   );
 });
 
+test("malformed request globs fail before opening the workspace", async (
+  context,
+) => {
+  const root = await createRoot(context);
+  const missingRoot = join(root, "missing");
+  const execution = await executeCli(
+    ["search", "--root", missingRoot, "--json"],
+    jsonBytes({
+      mode: "paths",
+      include: ["["],
+    }),
+    root,
+  );
+  const response = JSON.parse(Buffer.from(execution.stdout).toString("utf8"));
+
+  assert.equal(execution.exitCode, CLI_EXIT.requestError);
+  assert.equal(response.status, "failed");
+  assert.equal(response.diagnostics[0].code, "invalid_glob");
+});
+
+test("CLI rejects lone surrogates before creating a file", async (context) => {
+  const root = await createRoot(context);
+  const execution = await executeCli(
+    ["create", "--root", root, "--json"],
+    jsonBytes({
+      path: "invalid.txt",
+      content: "\uD800",
+      writeAs: { encoding: "utf-8" },
+    }),
+    root,
+  );
+  const response = JSON.parse(Buffer.from(execution.stdout).toString("utf8"));
+
+  assert.equal(execution.exitCode, CLI_EXIT.requestError);
+  assert.equal(response.diagnostics[0].code, "invalid_unicode_scalar");
+  assert.equal(response.diagnostics[0].details.characterOffset, 0);
+  await assert.rejects(readFile(join(root, "invalid.txt")), {
+    code: "ENOENT",
+  });
+});
+
+test("CLI encode diagnostics include the failing character offset", async (
+  context,
+) => {
+  const root = await createRoot(context);
+  const execution = await executeCli(
+    ["create", "--root", root, "--json"],
+    jsonBytes({
+      path: "invalid.txt",
+      content: "日本🎵",
+      writeAs: { encoding: "windows-31j" },
+    }),
+    root,
+  );
+  const response = JSON.parse(Buffer.from(execution.stdout).toString("utf8"));
+
+  assert.equal(execution.exitCode, CLI_EXIT.runtimeError);
+  assert.equal(response.diagnostics[0].code, "encode_error");
+  assert.equal(response.diagnostics[0].details.characterOffset, 2);
+  await assert.rejects(readFile(join(root, "invalid.txt")), {
+    code: "ENOENT",
+  });
+});
+
 test("useful incomplete results use the distinct partial exit", async (
   context,
 ) => {
@@ -148,6 +241,25 @@ test("useful incomplete results use the distinct partial exit", async (
   assert.equal(execution.exitCode, CLI_EXIT.partial);
   assert.equal(response.status, "partial");
   assert.equal(response.diagnostics[0].code, "encoding_undetermined");
+});
+
+test("CLI applies its host limit ceiling", async (context) => {
+  const root = await createRoot(context);
+  await writeFile(join(root, "one.txt"), "one\n");
+  const execution = await executeCli(
+    ["search", "--root", root, "--json"],
+    jsonBytes({
+      mode: "paths",
+      projection: "count",
+      limits: { maxFilesVisited: 20_000 },
+    }),
+    root,
+  );
+  const response = JSON.parse(Buffer.from(execution.stdout).toString("utf8"));
+
+  assert.equal(execution.exitCode, CLI_EXIT.partial);
+  assert.equal(response.usage.effectiveLimits.maxFilesVisited, 10_000);
+  assert.equal(response.diagnostics[0].code, "limit_clamped");
 });
 
 test("CLI create, replace, and delete share the mutation core", async (
@@ -192,6 +304,72 @@ test("CLI create, replace, and delete share the mutation core", async (
   );
   assert.equal(deleteExecution.exitCode, CLI_EXIT.success);
   await assert.rejects(readFile(join(root, "cli.txt")), { code: "ENOENT" });
+});
+
+test("CLI applies repository encoding rules to read, search, and update", async (
+  context,
+) => {
+  const root = await createRoot(context);
+  await mkdir(join(root, ".mikusoft"));
+  await writeFile(
+    join(root, ".mikusoft", "miku-text-file-ops.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      encodingRules: [
+        { glob: "legacy.txt", encoding: "windows-31j" },
+      ],
+    }),
+  );
+  const original = encodeStrict("旧\r\n値\r\n", "windows-31j");
+  await writeFile(join(root, "legacy.txt"), original);
+
+  const readExecution = await executeCli(
+    ["read", "--root", root, "--json"],
+    jsonBytes({ items: [{ path: "legacy.txt", full: true }] }),
+    root,
+  );
+  const readResponse = JSON.parse(
+    Buffer.from(readExecution.stdout).toString("utf8"),
+  );
+  assert.equal(readExecution.exitCode, CLI_EXIT.success);
+  assert.equal(readResponse.results[0].encoding, "windows-31j");
+  assert.equal(readResponse.results[0].encodingSource, "repositoryRule");
+
+  const searchExecution = await executeCli(
+    ["search", "--root", root, "--json"],
+    jsonBytes({
+      mode: "content",
+      pattern: "値",
+      include: ["legacy.txt"],
+    }),
+    root,
+  );
+  const searchResponse = JSON.parse(
+    Buffer.from(searchExecution.stdout).toString("utf8"),
+  );
+  assert.equal(searchExecution.exitCode, CLI_EXIT.success);
+  assert.equal(searchResponse.status, "success");
+  assert.equal(searchResponse.results[1].text, "値");
+
+  const updateExecution = await executeCli(
+    ["update", "--root", root, "--json"],
+    jsonBytes({
+      path: "legacy.txt",
+      expectedRevision: readResponse.results[0].revision,
+      change: {
+        type: "context-diff",
+        diff: "@@\n-値\n+新\n",
+      },
+    }),
+    root,
+  );
+  assert.equal(updateExecution.exitCode, CLI_EXIT.success);
+  assert.equal(
+    Buffer.from(
+      encodeStrict("旧\r\n新\r\n", "windows-31j"),
+    ).equals(await readFile(join(root, "legacy.txt"))),
+    true,
+  );
 });
 
 test("the executable keeps machine-mode stdout protocol-pure", async (
