@@ -17,6 +17,7 @@ export interface EnvelopeInput<TResult extends object> {
   results?: readonly TResult[];
   diagnostics?: readonly Diagnostic[];
   diagnosticsOmitted?: number;
+  diagnosticsOmittedByCode?: Readonly<Record<string, number>>;
   effectiveLimits: Readonly<EffectiveLimits>;
   usage?: Readonly<
     Partial<
@@ -40,6 +41,7 @@ export function createEnvelope<
   const results = input.results ?? [];
   const diagnostics = input.diagnostics ?? [];
   const diagnosticsOmitted = input.diagnosticsOmitted ?? 0;
+  const omittedByCode = input.diagnosticsOmittedByCode ?? {};
   const completenessReasons = [...(input.completenessReasons ?? [])].sort();
 
   const envelope: ResultEnvelope<TResult> = {
@@ -55,7 +57,7 @@ export function createEnvelope<
     diagnosticSummary: {
       returned: diagnostics.length,
       omitted: diagnosticsOmitted,
-      byCode: summarizeDiagnostics(diagnostics),
+      byCode: summarizeDiagnostics(diagnostics, omittedByCode),
     },
     usage: {
       limitProfile: LIMIT_PROFILE,
@@ -95,10 +97,14 @@ function settleResultBytes(envelope: ResultEnvelope<unknown>): void {
 
 function summarizeDiagnostics(
   diagnostics: readonly Diagnostic[],
+  omittedByCode: Readonly<Record<string, number>>,
 ): readonly DiagnosticCount[] {
   const counts = new Map<string, number>();
   for (const diagnostic of diagnostics) {
     counts.set(diagnostic.code, (counts.get(diagnostic.code) ?? 0) + 1);
+  }
+  for (const [code, count] of Object.entries(omittedByCode)) {
+    counts.set(code, (counts.get(code) ?? 0) + count);
   }
   return [...counts]
     .sort(([left], [right]) => compareUnicodeScalars(left, right))

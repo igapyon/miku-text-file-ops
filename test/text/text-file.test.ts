@@ -46,6 +46,18 @@ test("text file rejects undetermined encoding without fallback", () => {
   );
 });
 
+test("text file preserves the invalid UTF-8 byte offset", () => {
+  assert.throws(
+    () => decodeTextFile(Uint8Array.from([0x61, 0xe3, 0x81])),
+    (error: unknown) => {
+      assert.ok(error instanceof TextFileError);
+      assert.equal(error.code, "encoding_undetermined");
+      assert.equal(error.byteOffset, 1);
+      return true;
+    },
+  );
+});
+
 test("text file rejects an explicit encoding that conflicts with BOM", () => {
   const bytes = Uint8Array.from([0xff, 0xfe, 0x41, 0x00]);
   assert.throws(

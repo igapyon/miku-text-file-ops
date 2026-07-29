@@ -1,0 +1,149 @@
+{
+  "formatVersion": 1,
+  "byteEncoding": "lowercase-hex",
+  "decoding": [
+    {
+      "name": "malformed UTF-8 reports raw offset",
+      "encoding": "utf-8",
+      "inputHex": "61e381",
+      "expectedError": {
+        "code": "decode_error",
+        "byteOffset": 1
+      }
+    },
+    {
+      "name": "unpaired UTF-16LE surrogate reports raw offset",
+      "encoding": "utf-16le",
+      "inputHex": "00d8",
+      "expectedError": {
+        "code": "decode_error",
+        "byteOffset": 0
+      }
+    },
+    {
+      "name": "Windows-31J extension characters decode exactly",
+      "encoding": "windows-31j",
+      "inputHex": "fbfcfab18740",
+      "expectedText": "髙﨑①"
+    }
+  ],
+  "logicalText": [
+    {
+      "name": "mixed newlines with final newline",
+      "encoding": "utf-8",
+      "inputHex": "610d0a620a630d",
+      "expected": {
+        "lineEnding": "mixed",
+        "finalNewline": true,
+        "logicalLines": 3,
+        "revision": "sha256:e186762058e64443528109b20dc5dc2b31d8bef421799eec25b97e21c30c9940"
+      }
+    }
+  ],
+  "mutations": [
+    {
+      "name": "Windows-31J preserve retains untouched alias bytes",
+      "initialHex": "87900d0a610d0a",
+      "repositoryEncoding": "windows-31j",
+      "request": {
+        "path": "target.txt",
+        "expectedRevision": "sha256:bcbbfaed4336e7eb13796c589e76f60cfb8d8285ca70b7ea4c8082479a1e7f07",
+        "change": {
+          "type": "context-diff",
+          "diff": "@@\n-a\n+A\n"
+        }
+      },
+      "expectedOutputHex": "87900d0a410d0a"
+    },
+    {
+      "name": "UTF-16BE create writes BOM and CRLF",
+      "request": {
+        "path": "created.txt",
+        "content": "A\n",
+        "writeAs": {
+          "encoding": "utf-16be",
+          "lineEnding": "crlf",
+          "bom": true
+        }
+      },
+      "expectedOutputHex": "feff0041000d000a"
+    },
+    {
+      "name": "stale update revision fails closed",
+      "initialHex": "63757272656e74",
+      "request": {
+        "path": "target.txt",
+        "expectedRevision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "change": {
+          "type": "transcode"
+        }
+      },
+      "expectedError": {
+        "code": "stale_revision"
+      }
+    }
+  ],
+  "budgets": [
+    {
+      "name": "READ continues to a zero-character item",
+      "operation": "read",
+      "files": [
+        { "path": "one.txt", "hex": "78" },
+        { "path": "zero.txt", "hex": "" }
+      ],
+      "request": {
+        "items": [
+          { "path": "one.txt", "full": true },
+          { "path": "zero.txt", "full": true }
+        ],
+        "limits": {
+          "maxTextCharsReturned": 1
+        }
+      },
+      "expected": {
+        "status": "success",
+        "recordsReturned": 2,
+        "itemsProcessed": 2
+      }
+    },
+    {
+      "name": "SEARCH aggregates omitted diagnostics",
+      "operation": "search",
+      "files": [
+        { "path": "bad-a.bin", "hex": "ff" },
+        { "path": "bad-b.bin", "hex": "ff" },
+        { "path": "bad-c.bin", "hex": "ff" }
+      ],
+      "request": {
+        "mode": "content",
+        "projection": "count",
+        "pattern": "x",
+        "limits": {
+          "maxDiagnostics": 1
+        }
+      },
+      "expected": {
+        "status": "partial",
+        "diagnosticsReturned": 1,
+        "diagnosticsOmitted": 2,
+        "diagnosticCode": "encoding_undetermined",
+        "diagnosticCount": 3
+      }
+    }
+  ],
+  "canonicalResponses": [
+    {
+      "name": "content count over one UTF-8 file",
+      "operation": "search",
+      "files": [
+        { "path": "one.txt", "hex": "780a" }
+      ],
+      "request": {
+        "mode": "content",
+        "projection": "count",
+        "pattern": "x"
+      },
+      "expectedUtf8": "{\"completeness\":{\"complete\":true,\"reasons\":[]},\"diagnosticSummary\":{\"byCode\":[],\"omitted\":0,\"returned\":0},\"diagnostics\":[],\"operation\":\"search\",\"results\":[{\"filesDecoded\":1,\"filesMatched\":1,\"filesMatchedAtLeast\":null,\"filesReturned\":0,\"filesSkipped\":0,\"filesVisited\":1,\"matchUnit\":\"logicalLine\",\"matchesFound\":1,\"matchesFoundAtLeast\":null,\"matchesReturned\":0,\"mode\":\"content\",\"scanComplete\":true,\"type\":\"searchSummary\"}],\"schemaVersion\":\"miku-text-file-ops/v1\",\"status\":\"success\",\"usage\":{\"bytesRead\":2,\"diagnosticsOmitted\":0,\"diagnosticsReturned\":0,\"effectiveLimits\":{\"maxDiagnostics\":50,\"maxFacetValues\":10,\"maxFilesReturned\":100,\"maxFilesVisited\":10000,\"maxItems\":8,\"maxLinesPerItem\":400,\"maxMatches\":100,\"maxMatchesPerFile\":10,\"maxResultBytes\":32768,\"maxSourceBytes\":268435456,\"maxTextCharsReturned\":16384},\"filesVisited\":1,\"limitProfile\":\"agent-v1\",\"recordsReturned\":1,\"resultBytes\":916,\"textCharsReturned\":0}}\n"
+    }
+  ]
+}

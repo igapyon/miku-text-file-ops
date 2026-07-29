@@ -14,6 +14,29 @@ test("request glob supports zero or more directories for double star", () => {
   assert.equal(requestGlobMatches(glob, "README.md"), false);
 });
 
+test("double star crosses directories only in Git-style positions", () => {
+  for (const pattern of ["dir/a**b", "dir/**b", "dir/a***b"]) {
+    const glob = compileRequestGlob(pattern);
+    assert.equal(
+      requestGlobMatches(glob, "dir/a/x/b"),
+      false,
+      `${pattern} must not cross a directory separator`,
+    );
+  }
+
+  const leading = compileRequestGlob("**/name");
+  assert.equal(requestGlobMatches(leading, "name"), true);
+  assert.equal(requestGlobMatches(leading, "a/b/name"), true);
+
+  const middle = compileRequestGlob("dir/**/name");
+  assert.equal(requestGlobMatches(middle, "dir/name"), true);
+  assert.equal(requestGlobMatches(middle, "dir/a/b/name"), true);
+
+  const trailing = compileRequestGlob("dir/**");
+  assert.equal(requestGlobMatches(trailing, "dir/file"), true);
+  assert.equal(requestGlobMatches(trailing, "dir/a/b"), true);
+});
+
 test("request glob without slash matches basenames at any depth", () => {
   const glob = compileRequestGlob("*.md");
   assert.equal(requestGlobMatches(glob, "README.md"), true);
@@ -64,4 +87,14 @@ test("gitignore supports comments, escaped markers, and trailing spaces", () => 
   assert.equal(gitIgnoreStatus("#hash", false, rules), true);
   assert.equal(gitIgnoreStatus("trimmed.txt", false, rules), true);
   assert.equal(rules.length, 3);
+});
+
+test("gitignore shares the Git-style double-star boundary", () => {
+  const ordinary = parseGitIgnore("dir/a**b\n", "", ".gitignore");
+  assert.equal(gitIgnoreStatus("dir/axxb", false, ordinary), true);
+  assert.equal(gitIgnoreStatus("dir/a/x/b", false, ordinary), false);
+
+  const recursive = parseGitIgnore("dir/**/name\n", "", ".gitignore");
+  assert.equal(gitIgnoreStatus("dir/name", false, recursive), true);
+  assert.equal(gitIgnoreStatus("dir/a/b/name", false, recursive), true);
 });

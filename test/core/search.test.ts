@@ -217,12 +217,131 @@ test("SEARCH enforces canonical result byte budget", async (context) => {
   assert.ok(envelope.completeness.reasons.includes("result_byte_limit"));
 });
 
+test("SEARCH reports context trimming as partial", async (context) => {
+  const { workspace } = await createWorkspace(context, {
+    "context.txt": "before\nHIT\nafter\n",
+  });
+  const envelope = await executeSearch(workspace, {
+    mode: "content",
+    pattern: "HIT",
+    beforeContext: 1,
+    afterContext: 1,
+    limits: { maxTextCharsReturned: 3 },
+  });
+
+  assert.equal(envelope.status, "partial");
+  assert.ok(envelope.completeness.reasons.includes("text_char_limit"));
+  const match = envelope.results.find((record) => record.type === "match");
+  assert.deepEqual(match?.beforeContext, []);
+  assert.deepEqual(match?.afterContext, []);
+});
+
+test("SEARCH diagnostic summary includes omitted diagnostics by code", async (
+  context,
+) => {
+  const { workspace } = await createWorkspace(context, {
+    "bad-a.bin": Uint8Array.from([0xff]),
+    "bad-b.bin": Uint8Array.from([0xff]),
+    "bad-c.bin": Uint8Array.from([0xff]),
+  });
+  const envelope = await executeSearch(workspace, {
+    mode: "content",
+    projection: "count",
+    pattern: "x",
+    limits: { maxDiagnostics: 1 },
+  });
+
+  assert.equal(envelope.diagnosticSummary.returned, 1);
+  assert.equal(envelope.diagnosticSummary.omitted, 2);
+  assert.deepEqual(envelope.diagnosticSummary.byCode, [
+    { code: "encoding_undetermined", count: 3 },
+  ]);
+});
+
+test("SEARCH maxFilesVisited stops before later directory diagnostics", async (
+  context,
+) => {
+  const { root, workspace } = await createWorkspace(context, {
+    "a.txt": "a\n",
+  });
+  await mkdir(join(root, "z-later"));
+  await writeFile(
+    join(root, "z-later", ".gitignore"),
+    Uint8Array.from([0xff]),
+  );
+  const envelope = await executeSearch(workspace, {
+    mode: "paths",
+    projection: "count",
+    limits: { maxFilesVisited: 1 },
+  });
+
+  assert.equal(envelope.usage.filesVisited, 1);
+  assert.ok(envelope.completeness.reasons.includes("file_visit_limit"));
+  assert.equal(
+    envelope.diagnostics.some(
+      (diagnostic) => diagnostic.code === "source_error",
+    ),
+    false,
+  );
+});
+
+test("SEARCH matches stops reading after result record admission fails", async (
+  context,
+) => {
+  const first = `${"x".repeat(5_000)}\n`;
+  const { workspace } = await createWorkspace(context, {
+    "a.txt": first,
+    "z-bad.bin": Uint8Array.from([0xff]),
+  });
+  const envelope = await executeSearch(workspace, {
+    mode: "content",
+    pattern: "x",
+    limits: {
+      maxResultBytes: 4_096,
+      maxTextCharsReturned: 6_000,
+    },
+  });
+
+  assert.equal(envelope.usage.filesVisited, 1);
+  assert.equal(envelope.usage.bytesRead, Buffer.byteLength(first));
+  assert.ok(envelope.completeness.reasons.includes("result_byte_limit"));
+  assert.equal(envelope.diagnostics.length, 0);
+});
+
+test("SEARCH files stops reading after result record admission fails", async (
+  context,
+) => {
+  const { root, workspace } = await createWorkspace(context);
+  for (let index = 0; index < 40; index += 1) {
+    const name =
+      `a-${index.toString().padStart(2, "0")}-` +
+      `${"p".repeat(180)}.txt`;
+    await writeFile(join(root, name), "match\n");
+  }
+  await writeFile(join(root, "z-bad.bin"), Uint8Array.from([0xff]));
+
+  const envelope = await executeSearch(workspace, {
+    mode: "content",
+    projection: "files",
+    pattern: "match",
+    limits: { maxResultBytes: 4_096 },
+  });
+
+  assert.ok((envelope.usage.filesVisited ?? 0) < 41);
+  assert.ok(envelope.completeness.reasons.includes("result_byte_limit"));
+  assert.equal(envelope.diagnostics.length, 0);
+});
+
 async function createWorkspace(
   context: test.TestContext,
+  files: Readonly<Record<string, string | Uint8Array>> = {},
 ): Promise<{ root: string; workspace: Workspace }> {
   const root = await mkdtemp(join(tmpdir(), "miku-text-file-ops-search-"));
   context.after(async () => {
     await rm(root, { recursive: true, force: true });
   });
+  for (const [path, content] of Object.entries(files)) {
+    await writeFile(join(root, path), content);
+  }
   return { root, workspace: await Workspace.open(root) };
 }

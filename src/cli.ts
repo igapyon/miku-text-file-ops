@@ -1,8 +1,21 @@
 import { resolve } from "node:path";
 import {
+  applyLimitCeilings,
   RequestValidationError,
+  validateLimits,
 } from "./contracts/validation.js";
 import {
+  loadRepositoryTextPolicy,
+} from "./config/repository-policy.js";
+import {
+  validateCreateRequest,
+  validateDeleteRequest,
+  validateReadRequest,
+  validateSearchRequest,
+  validateUpdateRequest,
+} from "./contracts/requests.js";
+import {
+  AGENT_V1_LIMITS,
   type Diagnostic,
   type Operation,
   type ResultEnvelope,
@@ -85,15 +98,51 @@ export async function executeCli(
   }
 
   try {
+    validateOperationRequest(parsed.operation, request);
+  } catch (error) {
+    return renderFailure(parsed, error, isRequestFailure(error), request);
+  }
+
+  try {
     const workspace = await Workspace.open(parsed.root);
-    const envelope = await dispatch(parsed.operation, workspace, request);
+    const policy = await loadRepositoryTextPolicy(workspace);
+    const envelope = await dispatch(
+      parsed.operation,
+      workspace,
+      request,
+      policy,
+    );
     return renderExecution(parsed, envelope, exitForEnvelope(envelope));
   } catch (error) {
     return renderFailure(
       parsed,
       error,
       isRequestFailure(error),
+      request,
     );
+  }
+}
+
+function validateOperationRequest(
+  operation: Operation,
+  request: unknown,
+): void {
+  switch (operation) {
+    case "search":
+      validateSearchRequest(request);
+      return;
+    case "read":
+      validateReadRequest(request);
+      return;
+    case "create":
+      validateCreateRequest(request);
+      return;
+    case "update":
+      validateUpdateRequest(request);
+      return;
+    case "delete":
+      validateDeleteRequest(request);
+      return;
   }
 }
 
@@ -229,18 +278,26 @@ async function dispatch(
   operation: Operation,
   workspace: Workspace,
   request: unknown,
+  policy: Awaited<ReturnType<typeof loadRepositoryTextPolicy>>,
 ): Promise<ResultEnvelope<object>> {
+  const coreOptions = {
+    repositoryEncoding: policy.repositoryEncoding,
+    limitCeilings: AGENT_V1_LIMITS,
+    ...(policy.legacyFallback === undefined
+      ? {}
+      : { legacyFallback: policy.legacyFallback }),
+  };
   switch (operation) {
     case "search":
-      return executeSearch(workspace, request);
+      return executeSearch(workspace, request, coreOptions);
     case "read":
-      return executeRead(workspace, request);
+      return executeRead(workspace, request, coreOptions);
     case "create": {
       const result = await executeCreate(workspace, request);
       return mutationEnvelope(operation, { type: operation, ...result });
     }
     case "update": {
-      const result = await executeUpdate(workspace, request);
+      const result = await executeUpdate(workspace, request, coreOptions);
       return mutationEnvelope(operation, { type: operation, ...result });
     }
     case "delete": {
@@ -266,23 +323,80 @@ function renderFailure(
   parsed: ParsedArguments,
   error: unknown,
   requestError: boolean,
+  request?: unknown,
 ): CliExecution {
-  const diagnostics =
+  const allDiagnostics =
     error instanceof RequestValidationError
       ? error.diagnostics
       : [diagnosticFromError(error)];
-  const envelope = createEnvelope({
-    operation: parsed.operation,
-    status: "failed",
-    completenessReasons: diagnostics.map((diagnostic) => diagnostic.code),
-    diagnostics,
-    effectiveLimits: effectiveAgentV1Limits(),
-  });
+  const effectiveLimits = failureEffectiveLimits(parsed.operation, request);
+  const diagnostics = allDiagnostics.slice(
+    0,
+    effectiveLimits.maxDiagnostics,
+  );
+  const omittedByCode: Record<string, number> = {};
+  for (const diagnostic of allDiagnostics.slice(diagnostics.length)) {
+    omittedByCode[diagnostic.code] =
+      (omittedByCode[diagnostic.code] ?? 0) + 1;
+  }
+  const reasons = [...new Set(
+    allDiagnostics.map((diagnostic) => diagnostic.code),
+  )];
+  const build = () =>
+    createEnvelope({
+      operation: parsed.operation,
+      status: "failed",
+      completenessReasons: reasons,
+      diagnostics,
+      diagnosticsOmitted:
+        allDiagnostics.length - diagnostics.length,
+      diagnosticsOmittedByCode: omittedByCode,
+      effectiveLimits,
+    });
+  let envelope = build();
+  while (
+    serializeCanonicalEnvelope(envelope).byteLength >
+    effectiveLimits.maxResultBytes &&
+    diagnostics.length > 0
+  ) {
+    const omitted = diagnostics.pop() as Diagnostic;
+    omittedByCode[omitted.code] =
+      (omittedByCode[omitted.code] ?? 0) + 1;
+    envelope = build();
+  }
+  if (
+    serializeCanonicalEnvelope(envelope).byteLength >
+    effectiveLimits.maxResultBytes
+  ) {
+    throw new Error("Minimal CLI failure envelope exceeds maxResultBytes");
+  }
   return renderExecution(
     parsed,
     envelope,
     requestError ? CLI_EXIT.requestError : CLI_EXIT.runtimeError,
   );
+}
+
+function failureEffectiveLimits(
+  operation: Operation,
+  request: unknown,
+): ReturnType<typeof effectiveAgentV1Limits> {
+  if (
+    (operation !== "read" && operation !== "search") ||
+    typeof request !== "object" ||
+    request === null ||
+    Array.isArray(request)
+  ) {
+    return effectiveAgentV1Limits();
+  }
+  try {
+    const limits = validateLimits(
+      (request as Record<string, unknown>)["limits"],
+    );
+    return applyLimitCeilings(limits, AGENT_V1_LIMITS).effectiveLimits;
+  } catch {
+    return effectiveAgentV1Limits();
+  }
 }
 
 function renderExecution(
@@ -424,7 +538,12 @@ function diagnosticFromError(error: unknown): Diagnostic {
       severity: "error",
       code: "encode_error",
       message: error.message,
-      details: { encoding: error.encoding },
+      details: {
+        encoding: error.encoding,
+        ...(error.characterOffset === undefined
+          ? {}
+          : { characterOffset: error.characterOffset }),
+      },
     };
   }
   if (error instanceof TextDecodingError) {
@@ -432,6 +551,9 @@ function diagnosticFromError(error: unknown): Diagnostic {
       severity: "error",
       code: "decode_error",
       message: error.message,
+      ...(error.byteOffset === undefined
+        ? {}
+        : { byteOffset: error.byteOffset }),
       details: { encoding: error.encoding },
     };
   }

@@ -17,7 +17,10 @@ import {
   validateUpdateRequest,
 } from "../contracts/requests.js";
 import { Workspace } from "../fs/workspace.js";
-import { applyContextDiff } from "../patch/context-diff.js";
+import {
+  type AppliedContextDiffWithSources,
+  applyContextDiffWithSources,
+} from "../patch/context-diff.js";
 import {
   type CanonicalEncoding,
   encodeStrict,
@@ -145,12 +148,14 @@ export async function executeUpdate(
   let appliedHunks = 0;
   let addedLines = 0;
   let removedLines = 0;
+  let appliedContextDiff: AppliedContextDiffWithSources | undefined;
   if (request.change.type === "context-diff") {
-    const applied = applyContextDiff(
+    const applied = applyContextDiffWithSources(
       decoded.text,
       request.change.diff,
       request.writeAs.lineEnding,
     );
+    appliedContextDiff = applied;
     resultText = applied.text;
     appliedHunks = applied.hunksApplied;
     addedLines = applied.linesAdded;
@@ -180,7 +185,17 @@ export async function executeUpdate(
     request.writeAs.bom === "preserve"
       ? decoded.bom
       : request.writeAs.bom;
-  const newBytes = encodeWithBom(resultText, encoding, bom);
+  const newBytes =
+    appliedContextDiff !== undefined &&
+    request.writeAs.encoding === "preserve" &&
+    request.writeAs.lineEnding === "preserve"
+      ? encodeContextDiffPreservingSourceBytes(
+          originalBytes,
+          decoded,
+          appliedContextDiff,
+          bom,
+        )
+      : encodeWithBom(resultText, encoding, bom);
   const status = await lstat(target);
   await atomicRevisionGuardedReplace(
     target,
@@ -279,6 +294,110 @@ export function encodeWithBom(
         ? [0xff, 0xfe]
         : [0xfe, 0xff];
   return Uint8Array.from([...prefix, ...encoded]);
+}
+
+function encodeContextDiffPreservingSourceBytes(
+  originalBytes: Uint8Array,
+  decoded: ReturnType<typeof decodeTextFile>,
+  applied: AppliedContextDiffWithSources,
+  bom: boolean,
+): Uint8Array {
+  const bodyOffset = decoded.bom
+    ? decoded.encoding === "utf-8"
+      ? 3
+      : 2
+    : 0;
+  const sourceLines = splitEncodedLogicalLines(
+    originalBytes.subarray(bodyOffset),
+    decoded.encoding,
+  );
+  const outputLines = parseLogicalText(applied.text).lines;
+  if (
+    sourceLines.length !== decoded.logicalText.lines.length ||
+    outputLines.length !== applied.lineSources.length
+  ) {
+    return encodeWithBom(applied.text, decoded.encoding, bom);
+  }
+
+  const chunks = outputLines.map((line, index) => {
+    const sourceIndex = applied.lineSources[index];
+    if (sourceIndex !== null && sourceIndex !== undefined) {
+      const sourceLine = decoded.logicalText.lines[sourceIndex];
+      if (
+        sourceLine?.text === line.text &&
+        sourceLine.newline === line.newline
+      ) {
+        return sourceLines[sourceIndex] as Uint8Array;
+      }
+    }
+    return encodeStrict(
+      `${line.text}${line.newline ?? ""}`,
+      decoded.encoding,
+    );
+  });
+  const prefix = bom
+    ? decoded.encoding === "utf-8"
+      ? Uint8Array.from([0xef, 0xbb, 0xbf])
+      : decoded.encoding === "utf-16le"
+        ? Uint8Array.from([0xff, 0xfe])
+        : decoded.encoding === "utf-16be"
+          ? Uint8Array.from([0xfe, 0xff])
+          : (() => {
+              throw new MutationError(
+                "encode_error",
+                "windows-31j does not support a BOM",
+              );
+            })()
+    : new Uint8Array();
+  return concatenateBytes([prefix, ...chunks]);
+}
+
+function splitEncodedLogicalLines(
+  bytes: Uint8Array,
+  encoding: CanonicalEncoding,
+): readonly Uint8Array[] {
+  const width =
+    encoding === "utf-16le" || encoding === "utf-16be" ? 2 : 1;
+  const codeUnitAt = (offset: number): number => {
+    if (width === 1) return bytes[offset] as number;
+    return encoding === "utf-16be"
+      ? ((bytes[offset] as number) << 8) | (bytes[offset + 1] as number)
+      : (bytes[offset] as number) | ((bytes[offset + 1] as number) << 8);
+  };
+
+  const lines: Uint8Array[] = [];
+  let start = 0;
+  for (let offset = 0; offset < bytes.length; offset += width) {
+    const unit = codeUnitAt(offset);
+    if (unit !== 0x0a && unit !== 0x0d) continue;
+    let end = offset + width;
+    if (
+      unit === 0x0d &&
+      end < bytes.length &&
+      codeUnitAt(end) === 0x0a
+    ) {
+      end += width;
+      offset += width;
+    }
+    lines.push(bytes.subarray(start, end));
+    start = end;
+  }
+  if (start < bytes.length) {
+    lines.push(bytes.subarray(start));
+  }
+  return lines;
+}
+
+function concatenateBytes(chunks: readonly Uint8Array[]): Uint8Array {
+  const result = new Uint8Array(
+    chunks.reduce((total, chunk) => total + chunk.byteLength, 0),
+  );
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result;
 }
 
 function joinLogicalLines(

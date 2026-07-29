@@ -1,6 +1,8 @@
 import {
   type CanonicalEncoding,
+  firstUnpairedSurrogate,
 } from "../text/encoding.js";
+import { compileRequestGlob } from "../fs/glob.js";
 import {
   type Diagnostic,
   type EffectiveLimits,
@@ -738,11 +740,24 @@ function optionalStringArray(value: unknown, field: string): readonly string[] {
   }
   return value.map((item, index) => {
     const text = requiredString(item, `${field}[${index}]`);
+    const itemField = `${field}[${index}]`;
     if (text.includes("\0") || text.includes("\\")) {
       throw validationError(
         "invalid_glob",
-        `${field}[${index}] must use / and contain no NUL`,
-        { field: `${field}[${index}]` },
+        `${itemField} must use / and contain no NUL`,
+        { field: itemField },
+      );
+    }
+    try {
+      compileRequestGlob(text);
+    } catch (error) {
+      throw validationError(
+        "invalid_glob",
+        `${itemField} is not a valid glob`,
+        {
+          field: itemField,
+          reason: error instanceof Error ? error.message : String(error),
+        },
       );
     }
     return text;
@@ -752,6 +767,18 @@ function optionalStringArray(value: unknown, field: string): readonly string[] {
 function requiredString(value: unknown, field: string): string {
   if (typeof value !== "string") {
     return invalidField(field, "must be a string", value);
+  }
+  const invalid = firstUnpairedSurrogate(value);
+  if (invalid !== undefined) {
+    throw validationError(
+      "invalid_unicode_scalar",
+      `${field} must contain only Unicode scalar values`,
+      {
+        field,
+        characterOffset: invalid.characterOffset,
+        codeUnitOffset: invalid.codeUnitOffset,
+      },
+    );
   }
   return value;
 }

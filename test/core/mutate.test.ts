@@ -66,6 +66,22 @@ test("CREATE writes an explicit UTF-16BE BOM", async (context) => {
   assert.equal(decodeStrict(bytes, "utf-16be"), "A\r\n");
 });
 
+test("CREATE rejects lone surrogates without leaving a target", async (
+  context,
+) => {
+  const { root, workspace } = await createWorkspace(context);
+  await assert.rejects(
+    executeCreate(workspace, {
+      path: "invalid.txt",
+      content: "\uD800",
+      writeAs: { encoding: "utf-16le" },
+    }),
+  );
+  await assert.rejects(readFile(join(root, "invalid.txt")), {
+    code: "ENOENT",
+  });
+});
+
 test("UPDATE applies contextual diff and preserves permissions", async (
   context,
 ) => {
@@ -89,6 +105,31 @@ test("UPDATE applies contextual diff and preserves permissions", async (
   assert.equal(result.addedLines, 1);
   assert.equal(result.removedLines, 1);
   assert.equal((await stat(path)).mode & 0o777, 0o640);
+});
+
+test("UPDATE preserves untouched Windows-31J line bytes", async (context) => {
+  const { root, workspace } = await createWorkspace(context);
+  const path = join(root, "legacy.txt");
+  const original = Uint8Array.from([0x87, 0x90, 0x0a, 0x61, 0x0a]);
+  await writeFile(path, original);
+
+  await executeUpdate(
+    workspace,
+    {
+      path: "legacy.txt",
+      expectedRevision: rawByteRevision(original),
+      change: {
+        type: "context-diff",
+        diff: "@@\n-a\n+A\n",
+      },
+    },
+    { repositoryEncoding: () => "windows-31j" },
+  );
+
+  assert.deepEqual(
+    [...(await readFile(path))],
+    [0x87, 0x90, 0x0a, 0x41, 0x0a],
+  );
 });
 
 test("UPDATE transcodes Windows-31J to UTF-8 without changing text", async (

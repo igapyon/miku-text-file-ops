@@ -111,6 +111,46 @@ export function validateLimits(value: unknown): EffectiveLimits {
   return effectiveAgentV1Limits(overrides);
 }
 
+export interface ClampedLimits {
+  effectiveLimits: EffectiveLimits;
+  diagnostics: readonly Diagnostic[];
+}
+
+export function applyLimitCeilings(
+  requested: Readonly<EffectiveLimits>,
+  ceilings: Limits | undefined,
+): ClampedLimits {
+  if (ceilings === undefined) {
+    return { effectiveLimits: { ...requested }, diagnostics: [] };
+  }
+  const effectiveLimits = { ...requested };
+  const diagnostics: Diagnostic[] = [];
+  for (const [name, ceiling] of Object.entries(ceilings)) {
+    if (
+      ceiling === undefined ||
+      !Number.isSafeInteger(ceiling) ||
+      ceiling <= 0
+    ) {
+      continue;
+    }
+    const limitName = name as LimitName;
+    if (effectiveLimits[limitName] > ceiling) {
+      diagnostics.push({
+        severity: "warning",
+        code: "limit_clamped",
+        message: `limits.${name} was clamped to the host ceiling`,
+        details: {
+          field: `limits.${name}`,
+          requested: effectiveLimits[limitName],
+          effective: ceiling,
+        },
+      });
+      effectiveLimits[limitName] = ceiling;
+    }
+  }
+  return { effectiveLimits, diagnostics };
+}
+
 function validationDiagnostic(
   code: string,
   message: string,

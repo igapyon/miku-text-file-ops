@@ -169,13 +169,85 @@ test("READ can decode an explicitly selected Windows-31J item", async (
   assert.equal(envelope.results[0]?.encodingSource, "explicit");
 });
 
+test("READ host ceilings clamp requested limits with a diagnostic", async (
+  context,
+) => {
+  const { workspace } = await createWorkspace(context, {
+    "one.txt": "one\n",
+    "two.txt": "two\n",
+  });
+  const envelope = await executeRead(
+    workspace,
+    {
+      items: [
+        { path: "one.txt", full: true },
+        { path: "two.txt", full: true },
+      ],
+      limits: { maxItems: 10 },
+    },
+    { limitCeilings: { maxItems: 1 } },
+  );
+
+  assert.equal(envelope.status, "partial");
+  assert.equal(envelope.usage.effectiveLimits.maxItems, 1);
+  assert.equal(envelope.diagnostics[0]?.code, "limit_clamped");
+  assert.equal(envelope.usage.itemsProcessed, 1);
+});
+
+test("READ processes a zero-character item after exhausting text budget", async (
+  context,
+) => {
+  const { workspace } = await createWorkspace(context, {
+    "one.txt": "x",
+    "zero.txt": "",
+  });
+  const envelope = await executeRead(workspace, {
+    items: [
+      { path: "one.txt", full: true },
+      { path: "zero.txt", full: true },
+    ],
+    limits: { maxTextCharsReturned: 1 },
+  });
+
+  assert.equal(envelope.results.length, 2);
+  assert.equal(envelope.results[1]?.path, "zero.txt");
+  assert.equal(envelope.results[1]?.text, "");
+  assert.equal(envelope.usage.itemsProcessed, 2);
+});
+
+test("READ reports a line that cannot fit the result byte budget", async (
+  context,
+) => {
+  const { workspace } = await createWorkspace(context, {
+    "large.txt": "x".repeat(5_000),
+  });
+  const envelope = await executeRead(workspace, {
+    items: [{ path: "large.txt", full: true }],
+    limits: {
+      maxResultBytes: 4_096,
+      maxTextCharsReturned: 6_000,
+    },
+  });
+
+  assert.ok(envelope.usage.resultBytes <= 4_096);
+  assert.ok(
+    envelope.diagnostics.some(
+      (diagnostic) => diagnostic.code === "line_too_large",
+    ),
+  );
+});
+
 async function createWorkspace(
   context: test.TestContext,
+  files: Readonly<Record<string, string | Uint8Array>> = {},
 ): Promise<{ root: string; workspace: Workspace }> {
   const root = await mkdtemp(join(tmpdir(), "miku-text-file-ops-read-"));
   context.after(async () => {
     await rm(root, { recursive: true, force: true });
   });
   await mkdir(root, { recursive: true });
+  for (const [path, content] of Object.entries(files)) {
+    await writeFile(join(root, path), content);
+  }
   return { root, workspace: await Workspace.open(root) };
 }

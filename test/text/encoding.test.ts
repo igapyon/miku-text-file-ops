@@ -14,8 +14,12 @@ test("UTF-8 round-trips supplementary Unicode scalars", () => {
 
 test("invalid UTF-8 is rejected without replacement", () => {
   assert.throws(
-    () => decodeStrict(Uint8Array.from([0xe3, 0x81]), "utf-8"),
-    TextDecodingError,
+    () => decodeStrict(Uint8Array.from([0x61, 0xe3, 0x81]), "utf-8"),
+    (error: unknown) => {
+      assert.ok(error instanceof TextDecodingError);
+      assert.equal(error.byteOffset, 1);
+      return true;
+    },
   );
 });
 
@@ -54,14 +58,41 @@ test("windows-31j round-trips Japanese extension characters", () => {
 
 test("unencodable windows-31j output is rejected", () => {
   assert.throws(
-    () => encodeStrict("emoji: 🎵", "windows-31j"),
-    TextEncodingError,
+    () => encodeStrict("日本🎵", "windows-31j"),
+    (error: unknown) => {
+      assert.ok(error instanceof TextEncodingError);
+      assert.equal(error.characterOffset, 2);
+      return true;
+    },
   );
 });
 
 test("malformed windows-31j input is rejected", () => {
   assert.throws(
-    () => decodeStrict(Uint8Array.from([0x82]), "windows-31j"),
-    TextDecodingError,
+    () => decodeStrict(Uint8Array.from([0x41, 0x82]), "windows-31j"),
+    (error: unknown) => {
+      assert.ok(error instanceof TextDecodingError);
+      assert.equal(error.byteOffset, 1);
+      return true;
+    },
   );
+});
+
+test("all encoders reject lone surrogates without replacement", () => {
+  for (const encoding of [
+    "utf-8",
+    "utf-16le",
+    "utf-16be",
+    "windows-31j",
+  ] as const) {
+    assert.throws(
+      () => encodeStrict("A\uD800B", encoding),
+      (error: unknown) => {
+        assert.ok(error instanceof TextEncodingError);
+        assert.equal(error.encoding, encoding);
+        assert.equal(error.characterOffset, 1);
+        return true;
+      },
+    );
+  }
 });

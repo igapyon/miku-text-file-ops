@@ -463,6 +463,7 @@ recommendations.
 
 A broad path inventory can be summarized without returning individual paths.
 
+<!-- request-example: search -->
 ```json
 {
   "mode": "paths",
@@ -482,6 +483,7 @@ A broad path inventory can be summarized without returning individual paths.
 Markdown ATX heading candidates do not require a format-specific operation.
 They are a normal content search.
 
+<!-- request-example: search -->
 ```json
 {
   "mode": "content",
@@ -531,6 +533,7 @@ directory as an implicit request to return every file.
 
 Example:
 
+<!-- request-example: read -->
 ```json
 {
   "items": [
@@ -555,6 +558,11 @@ Example:
   }
 }
 ```
+
+`encodingRules` are evaluated in array order and the first matching rule wins.
+The same resolver is used by READ, content SEARCH, and UPDATE. A repository may
+also opt in to `"legacyFallback": "windows-31j"` at the top level; no legacy
+fallback is enabled when that field is absent.
 
 Supported selections are:
 
@@ -676,10 +684,11 @@ The `change` discriminated union contains:
 
 Example:
 
+<!-- request-example: update -->
 ```json
 {
   "path": "docs/spec.md",
-  "expectedRevision": "sha256:0123456789abcdef",
+  "expectedRevision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
   "change": {
     "type": "context-diff",
     "diff": "@@\n old context\n-old text\n+new text\n"
