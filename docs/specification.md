@@ -1152,6 +1152,43 @@ These commands map one-to-one to the five workspace data operations.
 Administrative commands may be added only under a separate contract; they do
 not expand this operation set.
 
+The executable also provides two global metadata options:
+
+```text
+miku-text-file-ops --help
+miku-text-file-ops --version
+```
+
+Each metadata option is valid only as the sole argument. It does not read
+standard input, open a workspace, or perform a data operation. Both options
+write UTF-8 text without BOM to stdout, write nothing to stderr, terminate the
+output with LF, and exit with code `0`.
+
+`--version` emits exactly the `package.json` version followed by LF. `--help`
+is a self-contained agent-facing interface reference. It identifies the
+product and version and documents:
+
+- the five operation commands and global options
+- workspace-root, path, and stdin JSON transport rules
+- the request shape, allowed values, defaults, and an example for every
+  operation
+- copyable stdin invocation examples whose rendered JSON is checked against
+  the operation request validators
+- revision handoff and contextual-diff requirements
+- the supported safe-regex surface and applicable limit names with their
+  `agent-v1` defaults
+- whole-file replace and preserved line-ending behavior needed to predict
+  mutation results
+- the structured result-envelope shape and partial-result handling
+- exit-code interpretation
+- the minimal search, read, and guarded-mutation workflow
+
+An agent with access to the executable and `--help` output must be able to
+construct valid requests without inspecting package source or repository
+documentation. These metadata options are distribution and discovery surfaces;
+they do not alter the five-operation vocabulary or structured result-envelope
+contract.
+
 Each command accepts exactly one request object as a UTF-8 JSON document on
 standard input. A UTF-8 BOM, malformed UTF-8, an empty input, trailing
 non-whitespace data, and more than one JSON document are request errors. This
@@ -1207,6 +1244,12 @@ CLI exit codes are:
 A nonzero exit does not make a structured response disposable. In `--json`
 mode, callers must inspect the emitted envelope, including partial results and
 diagnostics.
+
+The normative CLI behavior is shared by the package executable and the
+standalone release CLI bundle. The importable runtime bundle exposes the same
+public core API without executing the CLI entrypoint. Release packaging and
+asset naming are defined in
+[Release and bundles](./release-and-bundles.md).
 
 ## Agent Skill and MCP Surfaces
 

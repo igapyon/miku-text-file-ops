@@ -1,0 +1,210 @@
+import {
+  type CreateRequest,
+  type DeleteRequest,
+  type ReadRequest,
+  type SearchRequest,
+  type UpdateRequest,
+} from "./contracts/requests.js";
+import { type Operation } from "./contracts/types.js";
+import {
+  PRODUCT_NAME,
+  PRODUCT_VERSION,
+} from "./metadata.js";
+
+const EXAMPLE_REVISION = `sha256:${"0".repeat(64)}`;
+
+const PATH_SEARCH_EXAMPLE = {
+  mode: "paths",
+  projection: "files",
+  include: ["**/*.md"],
+  exclude: ["vendor/**"],
+} satisfies SearchRequest;
+
+const CONTENT_SEARCH_EXAMPLE = {
+  mode: "content",
+  pattern: "TODO",
+  syntax: "literal",
+  caseSensitive: true,
+  projection: "matches",
+  beforeContext: 1,
+  afterContext: 1,
+  include: ["src/**"],
+  exclude: ["dist/**"],
+} satisfies SearchRequest;
+
+const READ_EXAMPLE = {
+  items: [
+    {
+      path: "README.md",
+      range: { startLine: 1, endLine: 80 },
+    },
+  ],
+} satisfies ReadRequest;
+
+const CREATE_EXAMPLE = {
+  path: "new.txt",
+  content: "first\nsecond\n",
+  writeAs: {
+    encoding: "utf-8",
+    lineEnding: "lf",
+    bom: false,
+  },
+} satisfies CreateRequest;
+
+const UPDATE_EXAMPLE = {
+  path: "notes.txt",
+  expectedRevision: EXAMPLE_REVISION,
+  change: {
+    type: "context-diff",
+    diff: "@@\n unchanged\n-old\n+new\n",
+  },
+  writeAs: {
+    encoding: "preserve",
+    lineEnding: "preserve",
+    bom: "preserve",
+  },
+} satisfies UpdateRequest;
+
+const DELETE_EXAMPLE = {
+  path: "notes.txt",
+  expectedRevision: EXAMPLE_REVISION,
+} satisfies DeleteRequest;
+
+export function renderHelp(): string {
+  return [
+    `${PRODUCT_NAME} ${PRODUCT_VERSION}`,
+    "Encoding-aware, bounded text-file operations for AI agents.",
+    "",
+    "USAGE",
+    `  ${PRODUCT_NAME} [--root PATH] [--json] COMMAND < request.json`,
+    `  ${PRODUCT_NAME} --help`,
+    `  ${PRODUCT_NAME} --version`,
+    "",
+    "GLOBAL OPTIONS",
+    "  --root PATH  Workspace root; relative to cwd (default: cwd).",
+    "               The tool does not search parent directories for a root.",
+    "  --json       Emit one canonical JSON response. Recommended for agents.",
+    "  --help, -h   Show this complete interface reference without reading stdin.",
+    "  --version    Show only the product version without reading stdin.",
+    "",
+    "TRANSPORT AND PATH RULES",
+    "  COMMAND is exactly one of: search, read, create, update, delete.",
+    "  Supply exactly one UTF-8 JSON object on stdin, without a BOM.",
+    "  Unknown JSON fields are errors. Multiline strings use JSON escapes such as \\n.",
+    "  Paths are workspace-relative, use /, and cannot contain empty, . or .. segments.",
+    "  Mutations cannot target .git, follow symlinks, or create parent directories.",
+    "  The examples use POSIX-shell here-documents and can be copied as shown.",
+    "",
+    "SEARCH REQUEST",
+    ...requestExample("search", PATH_SEARCH_EXAMPLE),
+    "",
+    ...requestExample("search", CONTENT_SEARCH_EXAMPLE),
+    "  mode: paths | content.",
+    "  paths projection: files (default) | summary | count.",
+    "  content projection: matches (default) | files | summary | count.",
+    "  syntax: literal (default) | regex. safe-regex-v1 supports literals, ., ^, $,",
+    "    character classes/ranges, concatenation, |, (...) and (?:...), greedy or",
+    "    lazy * + ? {n} {n,} {n,m}, ASCII \\d \\s \\w classes and complements,",
+    "    ASCII \\b/\\B boundaries, and \\t \\f \\v \\xNN \\x{...} escapes.",
+    "    It rejects lookaround, backreferences, named groups, inline flags, Unicode",
+    "    property classes, possessive/atomic constructs, multiline, and dot-all.",
+    "  Patterns contain 1..4096 Unicode scalars and no CR/LF. Matching is per",
+    "  logical line, without Unicode normalization. caseSensitive defaults true.",
+    "  Context fields apply only to matches.",
+    "  facets applies only to summary: extension | topLevelPath.",
+    "  include/exclude are optional non-empty arrays of /-separated globs.",
+    "  Search honors root and nested .gitignore files, skips .git, and does not",
+    "  traverse symbolic links. include never re-includes an ignored path.",
+    "",
+    "READ REQUEST",
+    ...requestExample("read", READ_EXAMPLE),
+    "  items is non-empty. Each item requires path and exactly one selector:",
+    "    full:true | range:{startLine,endLine} | firstLines:N | lastLines:N",
+    "  Lines are 1-based; range endpoints are inclusive.",
+    "  Optional item encoding: utf-8 | utf-16le | utf-16be | windows-31j.",
+    "  Results include LF-normalized text, complete-file metadata, and revision.",
+    "  Bounded output may be partial; follow returned remainingRanges explicitly.",
+    "",
+    "CREATE REQUEST",
+    ...requestExample("create", CREATE_EXAMPLE),
+    "  Creates new.txt only when absent; it never overwrites.",
+    "  Parent directories must already exist. writeAs is optional.",
+    "  Defaults: encoding:utf-8, lineEnding:lf, bom:false.",
+    "  encoding: utf-8 | utf-16le | utf-16be | windows-31j.",
+    "  lineEnding: lf | crlf | cr. bom is boolean.",
+    "",
+    "UPDATE REQUEST",
+    ...requestExample("update", UPDATE_EXAMPLE),
+    "  Replace the all-zero example expectedRevision with revision from read.",
+    "  A successful update returns newRevision; use it as expectedRevision for",
+    "  the next update or delete.",
+    "  change is exactly one of:",
+    '    {"type":"context-diff","diff":"..."}  recommended for agent edits',
+    '    {"type":"replace","content":"..."}     explicit whole-file replacement',
+    '    {"type":"transcode"}                  representation-only change',
+    "  context-diff grammar (structural newlines are LF and final LF is required):",
+    '    patch = one or more "@@\\n" hunks; every body line starts with',
+    '    " " (context), "-" (remove), or "+" (add), and ends with LF.',
+    "    Each hunk needs a changed line and a context/remove source anchor.",
+    "    Matching is exact and must identify one unique location; Git headers and",
+    "    line-number ranges are not accepted. Source final-newline presence and",
+    "    unchanged mixed newline bytes are preserved when lineEnding is preserve.",
+    "  replace content determines all logical lines and final-newline presence.",
+    "    With lineEnding:preserve, a uniform original newline is reused; mixed",
+    "    newlines are reused by logical-line position, then the dominant original",
+    "    newline is used (first-seen breaks ties), with LF if none existed.",
+    "  writeAs defaults to preserve. encoding accepts preserve or a CREATE encoding;",
+    "  lineEnding accepts preserve | lf | crlf | cr; bom accepts preserve | boolean.",
+    "  Explicit lineEnding lf/crlf/cr normalizes every result separator.",
+    "",
+    "DELETE REQUEST",
+    ...requestExample("delete", DELETE_EXAMPLE),
+    "  Replace the all-zero example expectedRevision with revision from read or",
+    "  newRevision from update. Deletes one regular file; never recursive.",
+    "",
+    "OPTIONAL LIMITS (agent-v1 defaults)",
+    "  maxResultBytes:32768, maxTextCharsReturned:16384, maxDiagnostics:50,",
+    "  maxFilesVisited:10000, maxSourceBytes:268435456, maxMatches:100,",
+    "  maxMatchesPerFile:10, maxFilesReturned:100, maxFacetValues:10,",
+    "  maxItems:8, maxLinesPerItem:400.",
+    "  Common search: maxResultBytes, maxDiagnostics, maxFilesVisited.",
+    "  Content search also accepts maxSourceBytes. Projection-specific:",
+    "    matches: maxTextCharsReturned, maxMatches, maxMatchesPerFile",
+    "    files: maxFilesReturned; summary: maxFacetValues.",
+    "  Read: maxResultBytes, maxTextCharsReturned, maxDiagnostics, maxItems,",
+    "    maxLinesPerItem. Inapplicable limits are request errors.",
+    "",
+    "JSON RESPONSE",
+    '  {"schemaVersion":"miku-text-file-ops/v1","operation":"...",',
+    '   "status":"success|partial|failed","completeness":{...},"results":[...],',
+    '   "diagnostics":[...],"diagnosticSummary":{...},"usage":{...}}',
+    "  Always inspect the envelope, including on nonzero exit. Partial results and",
+    "  diagnostics remain useful. stdout contains only the response in --json mode.",
+    "  Without --json, stdout is concise bounded text and may fall back to compact",
+    "  JSON to stay within its budget; use --json for a stable machine contract.",
+    "",
+    "EXIT CODES",
+    "  0  Complete success.",
+    "  1  Useful but partial result; consume results and diagnostics.",
+    "  2  CLI syntax, JSON syntax, or request-validation error.",
+    "  3  Valid request operation failure or unexpected runtime error.",
+    "",
+    "MINIMAL AGENT WORKFLOW",
+    "  1. search with a narrow projection or bounded limits.",
+    "  2. read the required ranges and retain each returned revision.",
+    "  3. update/delete using that revision; prefer context-diff for edits.",
+    "  4. On stale_revision, read again and rebuild the request; do not retry blindly.",
+    "",
+  ].join("\n");
+}
+
+function requestExample(
+  operation: Operation,
+  request: object,
+): readonly string[] {
+  return [
+    `${PRODUCT_NAME} --root . --json ${operation} <<'JSON'`,
+    JSON.stringify(request, null, 2),
+    "JSON",
+  ];
+}

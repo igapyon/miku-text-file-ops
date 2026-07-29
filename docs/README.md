@@ -18,6 +18,7 @@ This README is an index. It does not define product behavior by itself.
 | [`specification.md`](./specification.md) | Normative | Product scope, operation contracts, safety rules, encoding behavior, results, and diagnostics |
 | [`agent-integration.md`](./agent-integration.md) | Accepted adapter design | Agent Skill discovery, trigger conditions, and CLI routing |
 | [`implementation-strategy.md`](./implementation-strategy.md) | Accepted non-normative strategy | Complete-scratch implementation and repository strategy |
+| [`release-and-bundles.md`](./release-and-bundles.md) | Accepted operational design | Reproducible CLI/runtime bundles and GitHub Release asset workflow |
 | [`notes/search-scaling-and-artifact-delivery.md`](./notes/search-scaling-and-artifact-delivery.md) | Work in progress | High-cardinality search refinement and out-of-band result artifacts |
 | [`notes/environment-capability-cache.md`](./notes/environment-capability-cache.md) | Work in progress | Environment-specific capability probing and failure memory |
 
@@ -27,8 +28,9 @@ For product implementation:
 
 1. Read the specification.
 2. Read the implementation strategy.
-3. Read the agent integration design.
-4. Consult the work-in-progress notes only for the feature being explored.
+3. Read the release and bundle design when working on distribution.
+4. Read the agent integration design.
+5. Consult the work-in-progress notes only for the feature being explored.
 
 For Agent Skill design:
 
@@ -79,6 +81,8 @@ The current document set agrees on these decisions:
   before expanding context.
 - The primary distribution is an Agent Skill with a bundled CLI; MCP remains
   an optional separately enabled adapter.
+- GitHub Releases publish a standalone CLI bundle, an importable runtime
+  bundle, and a reproducible source archive from a reviewed `v*` release tag.
 - `CREATE` fails if its target already exists; `UPDATE` and `DELETE` use
   revision guards and fail closed when the target has changed.
 - Contextual updates use a line-oriented, header-free hunk grammar with exact

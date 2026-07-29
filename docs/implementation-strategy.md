@@ -338,12 +338,31 @@ insufficient for BOM, newline, and legacy-encoding preservation.
 
 1. Add concise CLI text output.
 2. Add canonical one-response JSON mode.
-3. Bundle the CLI for the Agent Skill.
-4. Add Skill trigger, projection-routing, range-first, and partial-result
+3. Add stdin-independent `--help` and `--version` metadata output.
+4. Build a standalone CLI bundle, an importable runtime bundle, and a
+   reproducible source archive.
+5. Smoke-test CLI metadata and runtime exports locally.
+6. Publish the three prepared assets from a GitHub Release `published` event
+   after validating its `v*` tag against `package.json`.
+7. Bundle the CLI for the Agent Skill.
+8. Add Skill trigger, projection-routing, range-first, and partial-result
    workflow tests.
-5. Add Skill description and body size checks.
-6. If a target host justifies it, add the optional MCP adapter as a separate
+9. Add Skill description and body size checks.
+10. If a target host justifies it, add the optional MCP adapter as a separate
    deliverable.
+
+The release asset implementation keeps product behavior in the existing core.
+`esbuild` packages the already-built CLI and public runtime entrypoint; it does
+not define operation semantics. The source archive is generated from an
+explicit, sorted repository file set with portable metadata and a fixed
+timestamp. Generated `dist/`, `bundle/`, and `release-assets/` directories are
+local or CI outputs and remain outside Git.
+
+The release workflow is separate from ordinary push and pull-request CI. Its
+standard trigger is GitHub Release `published`, and it checks out the exact
+release tag before building. A tag must begin with `v` and match the
+`package.json` version, optionally followed by a dot suffix. Release creation,
+tag selection, and publication remain human-operated GitHub actions.
 
 ### Phase 6: Additional Runtimes
 
