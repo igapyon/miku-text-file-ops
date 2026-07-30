@@ -283,6 +283,7 @@ async function dispatch(
   const coreOptions = {
     repositoryEncoding: policy.repositoryEncoding,
     limitCeilings: AGENT_V1_LIMITS,
+    ...(policy.defaults === undefined ? {} : { defaults: policy.defaults }),
     ...(policy.legacyFallback === undefined
       ? {}
       : { legacyFallback: policy.legacyFallback }),
@@ -293,7 +294,7 @@ async function dispatch(
     case "read":
       return executeRead(workspace, request, coreOptions);
     case "create": {
-      const result = await executeCreate(workspace, request);
+      const result = await executeCreate(workspace, request, coreOptions);
       return mutationEnvelope(operation, { type: operation, ...result });
     }
     case "update": {
@@ -567,11 +568,19 @@ function diagnosticFromError(error: unknown): Diagnostic {
       "path" in error && typeof error.path === "string"
         ? error.path
         : undefined;
+    const details =
+      "details" in error &&
+      typeof error.details === "object" &&
+      error.details !== null &&
+      !Array.isArray(error.details)
+        ? error.details as Readonly<Record<string, unknown>>
+        : undefined;
     return {
       severity: "error",
       code: stableRuntimeCode(error.code),
       message: error instanceof Error ? error.message : String(error),
       ...(path === undefined ? {} : { path }),
+      ...(details === undefined ? {} : { details }),
     };
   }
   return {

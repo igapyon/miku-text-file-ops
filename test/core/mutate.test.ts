@@ -66,6 +66,44 @@ test("CREATE writes an explicit UTF-16BE BOM", async (context) => {
   assert.equal(decodeStrict(bytes, "utf-16be"), "A\r\n");
 });
 
+test("CREATE applies repository defaults with explicit and path-rule precedence", async (
+  context,
+) => {
+  const { root, workspace } = await createWorkspace(context);
+  const defaults = {
+    encoding: "utf-8",
+    lineEnding: "crlf",
+    bom: false,
+  } as const;
+  const repositoryEncoding = (path: string) =>
+    path.endsWith(".sjis") ? "windows-31j" as const : undefined;
+
+  const configured = await executeCreate(
+    workspace,
+    { path: "configured.sjis", content: "髙\n" },
+    { defaults, repositoryEncoding },
+  );
+  assert.equal(configured.encoding, "windows-31j");
+  assert.equal(configured.lineEnding, "crlf");
+  assert.deepEqual(
+    await readFile(join(root, "configured.sjis")),
+    Buffer.from(encodeStrict("髙\r\n", "windows-31j")),
+  );
+
+  const explicit = await executeCreate(
+    workspace,
+    {
+      path: "explicit.sjis",
+      content: "A\n",
+      writeAs: { encoding: "utf-16le", lineEnding: "cr", bom: true },
+    },
+    { defaults, repositoryEncoding },
+  );
+  assert.equal(explicit.encoding, "utf-16le");
+  assert.equal(explicit.lineEnding, "cr");
+  assert.equal(explicit.bom, true);
+});
+
 test("CREATE rejects lone surrogates without leaving a target", async (
   context,
 ) => {
@@ -161,20 +199,63 @@ test("UPDATE transcodes Windows-31J to UTF-8 without changing text", async (
 
 test("UPDATE fails closed on a stale revision", async (context) => {
   const { root, workspace } = await createWorkspace(context);
-  await writeFile(join(root, "update.txt"), "current");
+  const path = join(root, "update.txt");
+  const original = Buffer.from("original");
+  await writeFile(path, original);
+  await writeFile(path, "changed externally");
 
   await assert.rejects(
     executeUpdate(workspace, {
       path: "update.txt",
-      expectedRevision: `sha256:${"0".repeat(64)}`,
+      expectedRevision: rawByteRevision(original),
       change: { type: "transcode" },
     }),
     (error: unknown) => {
       assert.ok(error instanceof MutationError);
       assert.equal(error.code, "stale_revision");
+      assert.equal(error.path, "update.txt");
+      assert.equal(
+        error.details?.["expectedRevision"],
+        rawByteRevision(original),
+      );
+      assert.equal(
+        error.details?.["actualRevision"],
+        rawByteRevision(Buffer.from("changed externally")),
+      );
+      assert.equal(error.details?.["recovery"], "reread_and_rebuild_request");
+      assert.equal(error.details?.["retryUnchangedRequest"], false);
       return true;
     },
   );
+  assert.equal((await readFile(path)).toString("utf8"), "changed externally");
+});
+
+test("UPDATE final revision recheck preserves an intervening external change", async (
+  context,
+) => {
+  const { root, workspace } = await createWorkspace(context);
+  const path = join(root, "update.txt");
+  const original = Buffer.from("original");
+  await writeFile(path, original);
+
+  await assert.rejects(
+    executeUpdate(
+      workspace,
+      {
+        path: "update.txt",
+        expectedRevision: rawByteRevision(original),
+        change: { type: "replace", content: "requested" },
+      },
+      {
+        beforeFinalRevisionCheck: async () => {
+          await writeFile(path, "changed externally");
+        },
+      },
+    ),
+    (error: unknown) =>
+      error instanceof MutationError && error.code === "stale_revision",
+  );
+  assert.equal((await readFile(path)).toString("utf8"), "changed externally");
 });
 
 test("DELETE requires and returns the observed raw-byte revision", async (
@@ -198,6 +279,26 @@ test("DELETE requires and returns the observed raw-byte revision", async (
   await assert.rejects(readFile(join(root, "delete.txt")), {
     code: "ENOENT",
   });
+});
+
+test("DELETE fails closed when the file changed after read", async (context) => {
+  const { root, workspace } = await createWorkspace(context);
+  const path = join(root, "delete.txt");
+  const original = Buffer.from("original");
+  await writeFile(path, original);
+  await writeFile(path, "changed externally");
+
+  await assert.rejects(
+    executeDelete(workspace, {
+      path: "delete.txt",
+      expectedRevision: rawByteRevision(original),
+    }),
+    (error: unknown) =>
+      error instanceof MutationError &&
+      error.code === "stale_revision" &&
+      error.path === "delete.txt",
+  );
+  assert.equal((await readFile(path)).toString("utf8"), "changed externally");
 });
 
 test("UPDATE replace preserves a uniform source newline and content shape", async (
@@ -273,6 +374,34 @@ test("UPDATE replace falls back to LF when the source has no newline", async (
   assert.equal(
     (await readFile(join(root, "replace.txt"))).toString("utf8"),
     "a\nb",
+  );
+});
+
+test("UPDATE replace uses repository newline default when none is observable", async (
+  context,
+) => {
+  const { root, workspace } = await createWorkspace(context);
+  const bytes = Buffer.from("original");
+  await writeFile(join(root, "replace.txt"), bytes);
+  await executeUpdate(
+    workspace,
+    {
+      path: "replace.txt",
+      expectedRevision: rawByteRevision(bytes),
+      change: { type: "replace", content: "a\nb" },
+    },
+    {
+      defaults: {
+        encoding: "utf-8",
+        lineEnding: "crlf",
+        bom: false,
+      },
+    },
+  );
+
+  assert.equal(
+    (await readFile(join(root, "replace.txt"))).toString("utf8"),
+    "a\r\nb",
   );
 });
 

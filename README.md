@@ -1,11 +1,14 @@
 # miku-text-file-ops
 
-Encoding-aware local text file operations for AI agents.
+Local text file operations for AI agents, supporting Windows-31J and UTF
+encodings.
 
 The project provides bounded search and read operations together with
 exclusive create and revision-guarded update and delete operations. Product behavior is
 defined in [the specification](docs/specification.md), and the documentation
 index is available at [docs/README.md](docs/README.md).
+Stable stdin/stdout invocation patterns, including Windows examples, are
+documented in [docs/cli-invocation.md](docs/cli-invocation.md).
 
 ## Development
 
@@ -32,7 +35,7 @@ committed. Local references and verification artifacts belong under
 
 Publishing a GitHub Release with a `v*` tag runs
 `.github/workflows/release-cli-runtime-bundles.yml`. The tag must match the
-`package.json` version, with an optional dot suffix such as `v0.4.1.2`.
+`package.json` version, with an optional dot suffix such as `v0.5.0.2`.
 
 The workflow builds and attaches:
 

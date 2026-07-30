@@ -71,7 +71,7 @@ boundary provides no material benefit.
 ```yaml
 ---
 name: miku-text-file-ops
-description: Encoding-aware local text file operations with bounded search/read, exclusive create, and revision-guarded update/delete. Use when the user explicitly names miku-text-file-ops, when files may use Windows-31J or other non-UTF-8 encodings, when BOM or line endings must be preserved, or after ordinary tools produce mojibake or decode errors. Do not use for ordinary UTF-8-only file work where rg and apply_patch are sufficient.
+description: Local text file operations supporting Windows-31J and UTF encodings, with bounded search/read, exclusive create, and revision-guarded update/delete. Use when the user explicitly names miku-text-file-ops, when files may use Windows-31J, when BOM or line endings must be preserved, or after ordinary tools produce mojibake or decode errors. Do not use for ordinary UTF-8-only file work where rg and apply_patch are sufficient.
 ---
 ```
 
@@ -322,6 +322,18 @@ contract intentionally. It is the self-contained fallback for an agent that
 can execute the CLI but does not have the Agent Skill references in context.
 It includes the five request shapes, examples, revision handoff, structured
 response handling, and exit-code interpretation.
+
+When a mutation returns structured `stale_revision`, the Skill must:
+
+- never resend the unchanged request
+- read the reported `path` again through the bundled CLI
+- retain and compare the new `actualRevision`
+- rebuild the mutation from the latest content and new revision
+- explain the intervening change when it materially affects the requested edit
+
+The Skill consumes `details.expectedRevision`, `details.actualRevision`,
+`details.recovery`, and `details.retryUnchangedRequest` directly. It must not
+parse hashes or recovery instructions from the human-readable message.
 
 The skill must not require the agent to search the repository broadly for a jar,
 JavaScript bundle, or executable on every invocation.
