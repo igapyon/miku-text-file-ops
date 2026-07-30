@@ -32,6 +32,42 @@ test("repository text policy resolves encoding rules and legacy fallback", () =>
     lineEnding: "lf",
     bom: false,
   });
+  assert.deepEqual(policy.defaults, policy.defaultCreate);
+});
+
+test("repository text policy accepts defaults and rejects ambiguous aliases", () => {
+  const policy = parseRepositoryTextPolicy({
+    schemaVersion: 1,
+    defaults: {
+      encoding: "windows-31j",
+      lineEnding: "crlf",
+      bom: false,
+    },
+  });
+
+  assert.deepEqual(policy.defaults, {
+    encoding: "windows-31j",
+    lineEnding: "crlf",
+    bom: false,
+  });
+  assert.deepEqual(policy.defaultCreate, policy.defaults);
+  assert.throws(
+    () =>
+      parseRepositoryTextPolicy({
+        schemaVersion: 1,
+        defaults: {
+          encoding: "utf-8",
+          lineEnding: "lf",
+          bom: false,
+        },
+        defaultCreate: {
+          encoding: "utf-8",
+          lineEnding: "lf",
+          bom: false,
+        },
+      }),
+    RepositoryConfigError,
+  );
 });
 
 test("repository text policy rejects malformed configuration", () => {

@@ -17,6 +17,7 @@ This README is an index. It does not define product behavior by itself.
 | --- | --- | --- |
 | [`specification.md`](./specification.md) | Normative | Product scope, operation contracts, safety rules, encoding behavior, results, and diagnostics |
 | [`agent-integration.md`](./agent-integration.md) | Accepted adapter design | Agent Skill discovery, trigger conditions, and CLI routing |
+| [`cli-invocation.md`](./cli-invocation.md) | Accepted operational contract | Stable stdin/stdout invocation, Windows examples, encoding, and exit-code handling |
 | [`implementation-strategy.md`](./implementation-strategy.md) | Accepted non-normative strategy | Complete-scratch implementation and repository strategy |
 | [`release-and-bundles.md`](./release-and-bundles.md) | Accepted operational design | Reproducible CLI/runtime bundles and GitHub Release asset workflow |
 | [`conformance-corpus.md`](./conformance-corpus.md) | Executable contract | Runtime-independent byte-level fixtures and runner requirements |

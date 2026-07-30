@@ -33,6 +33,8 @@ export interface RepositoryCreateDefaults {
 
 export interface RepositoryTextPolicy {
   encodingRules: readonly RepositoryEncodingRule[];
+  defaults: RepositoryCreateDefaults | undefined;
+  /** @deprecated Use defaults. Retained for schemaVersion 1 compatibility. */
   defaultCreate: RepositoryCreateDefaults | undefined;
   legacyFallback: "windows-31j" | undefined;
   repositoryEncoding(path: string): CanonicalEncoding | undefined;
@@ -87,6 +89,7 @@ export function parseRepositoryTextPolicy(
     new Set([
       "schemaVersion",
       "encodingRules",
+      "defaults",
       "defaultCreate",
       "legacyFallback",
     ]),
@@ -104,10 +107,18 @@ export function parseRepositoryTextPolicy(
     parseEncodingRule(rule, index),
   );
 
-  const defaultCreate =
-    object["defaultCreate"] === undefined
-      ? undefined
-      : parseCreateDefaults(object["defaultCreate"]);
+  if (
+    object["defaults"] !== undefined &&
+    object["defaultCreate"] !== undefined
+  ) {
+    throw configError("defaults and defaultCreate cannot both be supplied");
+  }
+  const defaults =
+    object["defaults"] === undefined
+      ? object["defaultCreate"] === undefined
+        ? undefined
+        : parseCreateDefaults(object["defaultCreate"], "defaultCreate")
+      : parseCreateDefaults(object["defaults"], "defaults");
   const legacyFallback =
     object["legacyFallback"] === undefined
       ? undefined
@@ -116,7 +127,7 @@ export function parseRepositoryTextPolicy(
         : (() => {
             throw configError('legacyFallback must be "windows-31j"');
           })();
-  return buildPolicy(rules, defaultCreate, legacyFallback);
+  return buildPolicy(rules, defaults, legacyFallback);
 }
 
 function parseEncodingRule(
@@ -138,12 +149,15 @@ function parseEncodingRule(
   }
 }
 
-function parseCreateDefaults(value: unknown): RepositoryCreateDefaults {
-  const object = configObject(value, "defaultCreate");
+function parseCreateDefaults(
+  value: unknown,
+  field: "defaults" | "defaultCreate",
+): RepositoryCreateDefaults {
+  const object = configObject(value, field);
   rejectConfigFields(
     object,
     new Set(["encoding", "lineEnding", "bom"]),
-    "defaultCreate",
+    field,
   );
   try {
     return validateCreateRequest({
@@ -152,18 +166,19 @@ function parseCreateDefaults(value: unknown): RepositoryCreateDefaults {
       writeAs: object,
     }).writeAs;
   } catch (error) {
-    throw configError("defaultCreate is invalid", error);
+    throw configError(`${field} is invalid`, error);
   }
 }
 
 function buildPolicy(
   rules: readonly CompiledEncodingRule[],
-  defaultCreate: RepositoryCreateDefaults | undefined,
+  defaults: RepositoryCreateDefaults | undefined,
   legacyFallback: "windows-31j" | undefined,
 ): RepositoryTextPolicy {
   return {
     encodingRules: rules.map(({ glob, encoding }) => ({ glob, encoding })),
-    defaultCreate,
+    defaults,
+    defaultCreate: defaults,
     legacyFallback,
     repositoryEncoding: (path) =>
       rules.find((rule) => requestGlobMatches(rule.compiled, path))?.encoding,

@@ -16,6 +16,7 @@ import {
   PRODUCT_VERSION,
   encodeStrict,
   executeCli,
+  rawByteRevision,
   validateCreateRequest,
   validateDeleteRequest,
   validateReadRequest,
@@ -370,6 +371,92 @@ test("CLI applies repository encoding rules to read, search, and update", async 
     ).equals(await readFile(join(root, "legacy.txt"))),
     true,
   );
+});
+
+test("CLI applies repository defaults to create and undetectable newlines", async (
+  context,
+) => {
+  const root = await createRoot(context);
+  await mkdir(join(root, ".mikusoft"));
+  await writeFile(
+    join(root, ".mikusoft", "miku-text-file-ops.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      defaults: {
+        encoding: "utf-8",
+        lineEnding: "crlf",
+        bom: false,
+      },
+      encodingRules: [
+        { glob: "*.sjis", encoding: "windows-31j" },
+      ],
+    }),
+  );
+
+  const createExecution = await executeCli(
+    ["create", "--root", root, "--json"],
+    jsonBytes({ path: "created.sjis", content: "髙\n" }),
+    root,
+  );
+  assert.equal(createExecution.exitCode, CLI_EXIT.success);
+  assert.deepEqual(
+    await readFile(join(root, "created.sjis")),
+    Buffer.from(encodeStrict("髙\r\n", "windows-31j")),
+  );
+
+  const noNewline = Buffer.from("one");
+  await writeFile(join(root, "single.txt"), noNewline);
+  const updateExecution = await executeCli(
+    ["update", "--root", root, "--json"],
+    jsonBytes({
+      path: "single.txt",
+      expectedRevision: rawByteRevision(noNewline),
+      change: { type: "replace", content: "one\ntwo" },
+    }),
+    root,
+  );
+  assert.equal(updateExecution.exitCode, CLI_EXIT.success);
+  assert.equal(
+    (await readFile(join(root, "single.txt"))).toString("utf8"),
+    "one\r\ntwo",
+  );
+});
+
+test("CLI stale_revision diagnostic is structured for agent recovery", async (
+  context,
+) => {
+  const root = await createRoot(context);
+  const original = Buffer.from("original");
+  const path = join(root, "stale.txt");
+  await writeFile(path, original);
+  await writeFile(path, "changed externally");
+
+  const execution = await executeCli(
+    ["update", "--root", root, "--json"],
+    jsonBytes({
+      path: "stale.txt",
+      expectedRevision: rawByteRevision(original),
+      change: { type: "replace", content: "requested" },
+    }),
+    root,
+  );
+  const response = JSON.parse(Buffer.from(execution.stdout).toString("utf8"));
+  const diagnostic = response.diagnostics[0];
+
+  assert.equal(execution.exitCode, CLI_EXIT.runtimeError);
+  assert.equal(diagnostic.code, "stale_revision");
+  assert.equal(diagnostic.path, "stale.txt");
+  assert.equal(
+    diagnostic.details.expectedRevision,
+    rawByteRevision(original),
+  );
+  assert.equal(
+    diagnostic.details.actualRevision,
+    rawByteRevision(Buffer.from("changed externally")),
+  );
+  assert.equal(diagnostic.details.recovery, "reread_and_rebuild_request");
+  assert.equal(diagnostic.details.retryUnchangedRequest, false);
+  assert.equal((await readFile(path)).toString("utf8"), "changed externally");
 });
 
 test("the executable keeps machine-mode stdout protocol-pure", async (

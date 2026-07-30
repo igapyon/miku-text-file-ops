@@ -140,6 +140,8 @@ export interface ValidatedCreateRequest {
   };
 }
 
+export type CreateWriteDefaults = ValidatedCreateRequest["writeAs"];
+
 export type UpdateChange =
   | { type: "context-diff"; diff: string }
   | { type: "replace"; content: string }
@@ -352,10 +354,15 @@ export function validateReadRequest(value: unknown): ValidatedReadRequest {
 
 export function validateCreateRequest(
   value: unknown,
+  defaults: CreateWriteDefaults = {
+    encoding: "utf-8",
+    lineEnding: "lf",
+    bom: false,
+  },
 ): ValidatedCreateRequest {
   const object = requireObject(value);
   rejectUnknownFields(object, new Set(["path", "content", "writeAs"]));
-  const writeAs = validateCreateWriteAs(object["writeAs"]);
+  const writeAs = validateCreateWriteAs(object["writeAs"], defaults);
   return {
     path: validateWorkspacePath(object["path"], "path", true),
     content: requiredString(object["content"], "content"),
@@ -524,9 +531,10 @@ function validateReadItem(
 
 function validateCreateWriteAs(
   value: unknown,
+  defaults: CreateWriteDefaults,
 ): ValidatedCreateRequest["writeAs"] {
   if (value === undefined) {
-    return { encoding: "utf-8", lineEnding: "lf", bom: false };
+    return { ...defaults };
   }
   const object = requireObject(value, "writeAs");
   rejectUnknownFields(
@@ -539,15 +547,15 @@ function validateCreateWriteAs(
       object["encoding"],
       "writeAs.encoding",
       ENCODINGS,
-      "utf-8",
+      defaults.encoding,
     ),
     lineEnding: optionalEnum(
       object["lineEnding"],
       "writeAs.lineEnding",
       new Set<LineEndingChoice>(["lf", "crlf", "cr"]),
-      "lf",
+      defaults.lineEnding,
     ),
-    bom: optionalBoolean(object["bom"], "writeAs.bom", false),
+    bom: optionalBoolean(object["bom"], "writeAs.bom", defaults.bom),
   };
 }
 

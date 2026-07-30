@@ -662,7 +662,9 @@ Required behavior:
 - Do not implicitly create parent directories.
 - Require every path component to remain inside the configured root.
 - Reject symbolic links in the target path.
-- Create with UTF-8, LF, and no BOM by default.
+- Resolve each omitted create representation field in this order: explicit
+  `writeAs`, matching repository path rule for encoding, repository `defaults`,
+  then UTF-8, LF, and no BOM.
 - Permit explicit encoding, line-ending, and BOM selection.
 - Use exclusive creation semantics.
 - Return the new raw-byte revision and final text format.
@@ -800,7 +802,8 @@ the unchanged original file as follows:
    number uses the most frequent newline kind in the original file.
 4. For a frequency tie, the tied newline kind that appears first in the
    original file is used.
-5. If the original file contains no newline, LF is used.
+5. If the original file contains no newline, repository
+   `defaults.lineEnding` is used when configured; otherwise LF is used.
 
 This rule is ordinal rather than content-based: equal line text does not move
 or otherwise associate an original separator with a different result line.
@@ -810,7 +813,11 @@ including a separator after the final logical line. An empty
 
 ### Revision Guard
 
-`expectedRevision` is the SHA-256 of the complete original byte sequence.
+`expectedRevision` is the SHA-256 of the complete original byte sequence. It
+is an optimistic-concurrency token over the complete raw file bytes. Between
+the read that produced it and completion of `UPDATE` or `DELETE`, the caller
+must not modify the target through an editor, another CLI, another process, or
+another tool used by the same agent.
 
 The runtime must:
 
@@ -819,6 +826,11 @@ The runtime must:
 3. Recheck the source revision immediately before replacement.
 4. Fail with `stale_revision` when the revision differs.
 5. Replace the file atomically through a same-directory temporary file.
+
+On `stale_revision`, the runtime does not apply the requested mutation and
+does not substitute the latest revision automatically. The caller must read
+the target again, review the latest content, and rebuild the mutation request.
+It must never retry the unchanged mutation request.
 
 The revision guard is optimistic conflict detection. It must not be described as
 a fully linearizable filesystem transaction.
@@ -871,6 +883,8 @@ Required behavior:
 - reject recursive deletion
 - reject symbolic links
 - recheck the revision immediately before deletion
+- fail without deleting when any intervening byte change produces
+  `stale_revision`
 - classify the operation as destructive in protocol adapters
 - return the deleted path and old revision
 
@@ -941,13 +955,23 @@ Example:
       "encoding": "windows-31j"
     }
   ],
-  "defaultCreate": {
+  "defaults": {
     "encoding": "utf-8",
     "lineEnding": "lf",
     "bom": false
   }
 }
 ```
+
+`defaults` supplies fallback values when a create request omits representation
+fields and, for updates, when the existing content contains no observable
+newline. `encodingRules` take precedence over `defaults.encoding` for matching
+create paths. Existing update encoding and BOM remain observable state and are
+preserved by default.
+
+For compatibility with early schema-version 1 configurations,
+`defaultCreate` is accepted as a deprecated alias for `defaults`. A
+configuration must not supply both fields. New configurations use `defaults`.
 
 ## Ignore and Glob Contract
 
@@ -1145,6 +1169,16 @@ Important diagnostic codes include:
 Unknown request fields are validation errors. This catches misspelled
 agent-generated field names instead of silently ignoring them.
 
+A `stale_revision` diagnostic contains the root-relative `path` and these
+stable `details` fields:
+
+- `expectedRevision`: revision supplied by the mutation request
+- `actualRevision`: revision observed when the guard failed
+- `recovery`: `reread_and_rebuild_request`
+- `retryUnchangedRequest`: `false`
+
+The diagnostic does not include file contents or an unbounded diff.
+
 ## CLI Surface
 
 The executable provides:
@@ -1158,6 +1192,8 @@ miku-text-file-ops delete
 ```
 
 These commands map one-to-one to the five workspace data operations.
+Portable process-invocation examples and stream handling are specified in
+[CLI invocation](./cli-invocation.md).
 Administrative commands may be added only under a separate contract; they do
 not expand this operation set.
 

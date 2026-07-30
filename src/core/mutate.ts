@@ -10,6 +10,7 @@ import {
 import { basename, dirname, join } from "node:path";
 import {
   type LineEndingChoice,
+  type CreateWriteDefaults,
   type UpdateLineEndingChoice,
   type ValidatedUpdateRequest,
   validateCreateRequest,
@@ -44,11 +45,22 @@ export type MutationErrorCode =
 
 export class MutationError extends Error {
   readonly code: MutationErrorCode;
+  readonly path: string | undefined;
+  readonly details: Readonly<Record<string, unknown>> | undefined;
 
-  constructor(code: MutationErrorCode, message: string) {
+  constructor(
+    code: MutationErrorCode,
+    message: string,
+    options: {
+      path?: string;
+      details?: Readonly<Record<string, unknown>>;
+    } = {},
+  ) {
     super(message);
     this.name = "MutationError";
     this.code = code;
+    this.path = options.path;
+    this.details = options.details;
   }
 }
 
@@ -84,13 +96,25 @@ export interface MutationCoreOptions {
   repositoryEncoding?: (
     path: string,
   ) => CanonicalEncoding | undefined;
+  defaults?: CreateWriteDefaults;
+  beforeFinalRevisionCheck?: () => Promise<void>;
 }
 
 export async function executeCreate(
   workspace: Workspace,
   input: unknown,
+  options: MutationCoreOptions = {},
 ): Promise<CreateResult> {
-  const request = validateCreateRequest(input);
+  const preliminary = validateCreateRequest(input);
+  const defaults: CreateWriteDefaults = {
+    encoding:
+      options.repositoryEncoding?.(preliminary.path) ??
+      options.defaults?.encoding ??
+      "utf-8",
+    lineEnding: options.defaults?.lineEnding ?? "lf",
+    bom: options.defaults?.bom ?? false,
+  };
+  const request = validateCreateRequest(input, defaults);
   const target = await workspace.resolveCreateTarget(request.path);
   const formatted = normalizeLineEndings(
     request.content,
@@ -109,7 +133,9 @@ export async function executeCreate(
     await handle.sync();
   } catch (error) {
     if (isNodeCode(error, "EEXIST")) {
-      throw new MutationError("target_exists", "Create target already exists");
+      throw new MutationError("target_exists", "Create target already exists", {
+        path: request.path,
+      });
     }
     throw error;
   } finally {
@@ -135,7 +161,7 @@ export async function executeUpdate(
   const target = await workspace.resolveExistingFile(request.path);
   const originalBytes = await readFile(target);
   const oldRevision = rawByteRevision(originalBytes);
-  assertRevision(request.expectedRevision, oldRevision);
+  assertRevision(request.expectedRevision, oldRevision, request.path);
   const repositoryEncoding = options.repositoryEncoding?.(request.path);
   const decoded = decodeTextFile(originalBytes, {
     ...(repositoryEncoding === undefined ? {} : { repositoryEncoding }),
@@ -149,11 +175,18 @@ export async function executeUpdate(
   let addedLines = 0;
   let removedLines = 0;
   let appliedContextDiff: AppliedContextDiffWithSources | undefined;
+  const originalLogical = parseLogicalText(decoded.text);
+  const effectiveLineEnding =
+    request.writeAs.lineEnding === "preserve" &&
+    originalLogical.lineEnding === "none" &&
+    options.defaults !== undefined
+      ? options.defaults.lineEnding
+      : request.writeAs.lineEnding;
   if (request.change.type === "context-diff") {
     const applied = applyContextDiffWithSources(
       decoded.text,
       request.change.diff,
-      request.writeAs.lineEnding,
+      effectiveLineEnding,
     );
     appliedContextDiff = applied;
     resultText = applied.text;
@@ -161,12 +194,11 @@ export async function executeUpdate(
     addedLines = applied.linesAdded;
     removedLines = applied.linesRemoved;
   } else if (request.change.type === "replace") {
-    const originalLogical = parseLogicalText(decoded.text);
     const replacementLogical = parseLogicalText(request.change.content);
     resultText = formatReplacement(
       originalLogical,
       replacementLogical,
-      request.writeAs.lineEnding,
+      effectiveLineEnding,
     );
     addedLines = replacementLogical.lines.length;
     removedLines = originalLogical.lines.length;
@@ -202,6 +234,8 @@ export async function executeUpdate(
     request.expectedRevision,
     newBytes,
     status.mode,
+    request.path,
+    options.beforeFinalRevisionCheck,
   );
 
   return {
@@ -224,15 +258,21 @@ export async function executeUpdate(
 export async function executeDelete(
   workspace: Workspace,
   input: unknown,
+  options: MutationCoreOptions = {},
 ): Promise<DeleteResult> {
   const request = validateDeleteRequest(input);
   const target = await workspace.resolveExistingFile(request.path);
   const observed = await readFile(target);
   const oldRevision = rawByteRevision(observed);
-  assertRevision(request.expectedRevision, oldRevision);
+  assertRevision(request.expectedRevision, oldRevision, request.path);
 
+  await options.beforeFinalRevisionCheck?.();
   const rechecked = await readFile(target);
-  assertRevision(request.expectedRevision, rawByteRevision(rechecked));
+  assertRevision(
+    request.expectedRevision,
+    rawByteRevision(rechecked),
+    request.path,
+  );
   await unlink(target);
   return { path: request.path, oldRevision };
 }
@@ -431,6 +471,8 @@ async function atomicRevisionGuardedReplace(
   expectedRevision: string,
   bytes: Uint8Array,
   mode: number,
+  path: string,
+  beforeFinalRevisionCheck?: () => Promise<void>,
 ): Promise<void> {
   const temporary = join(
     dirname(target),
@@ -446,8 +488,9 @@ async function atomicRevisionGuardedReplace(
     handle = undefined;
     await chmod(temporary, mode & 0o7777);
 
+    await beforeFinalRevisionCheck?.();
     const rechecked = await readFile(target);
-    assertRevision(expectedRevision, rawByteRevision(rechecked));
+    assertRevision(expectedRevision, rawByteRevision(rechecked), path);
     await rename(temporary, target);
     renamed = true;
   } finally {
@@ -464,11 +507,20 @@ async function atomicRevisionGuardedReplace(
   }
 }
 
-function assertRevision(expected: string, actual: string): void {
+function assertRevision(expected: string, actual: string, path: string): void {
   if (expected !== actual) {
     throw new MutationError(
       "stale_revision",
-      `Expected revision ${expected}, observed ${actual}`,
+      "The file changed after it was read. Read it again and rebuild the mutation request; do not retry the unchanged request.",
+      {
+        path,
+        details: {
+          expectedRevision: expected,
+          actualRevision: actual,
+          recovery: "reread_and_rebuild_request",
+          retryUnchangedRequest: false,
+        },
+      },
     );
   }
 }
