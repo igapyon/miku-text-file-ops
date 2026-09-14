@@ -285,6 +285,92 @@ test("SEARCH maxFilesVisited stops before later directory diagnostics", async (
   );
 });
 
+test("SEARCH scan diagnostics make counts and facets non-exact", async (
+  context,
+) => {
+  const { root, workspace } = await createWorkspace(context, {
+    "a.txt": "needle\n",
+  });
+  await writeFile(join(root, ".gitignore"), Uint8Array.from([0xff]));
+
+  const envelope = await executeSearch(workspace, {
+    mode: "content",
+    projection: "summary",
+    pattern: "needle",
+    include: ["*.txt"],
+  });
+  const summary = envelope.results[0] as SearchSummaryRecord;
+  const facets = envelope.results.filter((record) => record.type === "facet");
+
+  assert.equal(envelope.status, "partial");
+  assert.equal(envelope.completeness.complete, false);
+  assert.ok(envelope.completeness.reasons.includes("source_error"));
+  assert.equal(summary.scanComplete, false);
+  assert.equal(summary.filesMatched, null);
+  assert.equal(summary.matchesFound, null);
+  assert.equal(summary.filesMatchedAtLeast, 1);
+  assert.equal(summary.matchesFoundAtLeast, 1);
+  assert.equal(facets.length, 2);
+  assert.ok(facets.every((record) => record.type === "facet" && !record.exact));
+
+  const contentCount = await executeSearch(workspace, {
+    mode: "content",
+    projection: "count",
+    pattern: "needle",
+    include: ["*.txt"],
+  });
+  const contentCountSummary = contentCount.results[0] as SearchSummaryRecord;
+  assert.equal(contentCountSummary.scanComplete, false);
+  assert.equal(contentCountSummary.matchesFound, null);
+  assert.equal(contentCountSummary.matchesFoundAtLeast, 1);
+
+  for (const projection of ["count", "summary"] as const) {
+    const pathEnvelope = await executeSearch(workspace, {
+      mode: "paths",
+      projection,
+      include: ["*.txt"],
+    });
+    const pathSummary = pathEnvelope.results[0] as SearchSummaryRecord;
+    assert.equal(pathSummary.scanComplete, false);
+    assert.equal(pathSummary.filesMatched, null);
+    assert.equal(pathSummary.filesMatchedAtLeast, 1);
+    if (projection === "summary") {
+      const pathFacets = pathEnvelope.results.filter(
+        (record) => record.type === "facet",
+      );
+      assert.ok(
+        pathFacets.every(
+          (record) => record.type === "facet" && !record.exact,
+        ),
+      );
+    }
+  }
+});
+
+test("SEARCH scan diagnostics remain incomplete when diagnostics are omitted", async (
+  context,
+) => {
+  const { root, workspace } = await createWorkspace(context, {
+    "a.txt": "needle\n",
+  });
+  await mkdir(join(root, "nested"));
+  await writeFile(join(root, ".gitignore"), Uint8Array.from([0xff]));
+  await writeFile(join(root, "nested", ".gitignore"), Uint8Array.from([0xff]));
+
+  const envelope = await executeSearch(workspace, {
+    mode: "paths",
+    projection: "summary",
+    include: ["*.txt"],
+    limits: { maxDiagnostics: 1 },
+  });
+  const summary = envelope.results[0] as SearchSummaryRecord;
+  assert.equal(envelope.diagnosticSummary.returned, 1);
+  assert.equal(envelope.diagnosticSummary.omitted, 1);
+  assert.equal(summary.scanComplete, false);
+  assert.equal(summary.filesMatched, null);
+  assert.ok(envelope.completeness.reasons.includes("source_error"));
+});
+
 test("SEARCH matches stops reading after result record admission fails", async (
   context,
 ) => {

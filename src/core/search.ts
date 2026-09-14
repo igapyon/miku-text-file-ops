@@ -162,15 +162,21 @@ export async function executeSearch(
     state.reasons.add("file_visit_limit");
   }
 
+  // A scan diagnostic means candidate discovery itself was incomplete, even
+  // when the file-visit limit was not reached. Keep this separate from the
+  // limit reason so callers can distinguish the two causes.
+  const discoveryComplete =
+    !scan.truncated && scan.diagnostics.length === 0;
+
   if (request.mode === "paths") {
-    executePathSearch(state, scan.files, !scan.truncated);
+    executePathSearch(state, scan.files, discoveryComplete, scan.truncated);
   } else {
     await executeContentSearch(
       state,
       scan.files,
       request,
       options,
-      !scan.truncated,
+      discoveryComplete,
     );
   }
   enforceSearchResultByteBudget(state);
@@ -181,6 +187,7 @@ function executePathSearch(
   state: SearchState,
   candidates: readonly WorkspaceFile[],
   discoveryComplete: boolean,
+  visitLimitReached: boolean,
 ): void {
   const request = state.request;
   if (request.mode !== "paths") {
@@ -189,7 +196,7 @@ function executePathSearch(
   const visited = candidates;
   state.filesVisited = visited.length;
   let scanComplete = discoveryComplete;
-  if (!scanComplete) {
+  if (visitLimitReached) {
     state.reasons.add("file_visit_limit");
   }
 

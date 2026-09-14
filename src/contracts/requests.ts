@@ -429,7 +429,7 @@ export function validateWorkspacePath(
       { field, path },
     );
   }
-  if (mutation && segments[0] === ".git") {
+  if (mutation && /^\.git$/iu.test(segments[0] as string)) {
     throw validationError(
       "protected_path",
       "Mutation under .git is prohibited",

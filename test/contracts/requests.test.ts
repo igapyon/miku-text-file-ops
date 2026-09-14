@@ -240,6 +240,36 @@ test("mutation paths protect .git and revisions are canonical", () => {
   );
 });
 
+test("mutation paths protect .git case-insensitively", () => {
+  const protectedPaths = [".git/config", ".GIT/config", ".GiT/config", ".GIT"];
+  for (const path of protectedPaths) {
+    assertValidationCode(
+      () => validateCreateRequest({ path, content: "blocked" }),
+      "protected_path",
+    );
+    assertValidationCode(
+      () =>
+        validateUpdateRequest({
+          path,
+          expectedRevision: REVISION,
+          change: { type: "replace", content: "blocked" },
+        }),
+      "protected_path",
+    );
+    assertValidationCode(
+      () => validateDeleteRequest({ path, expectedRevision: REVISION }),
+      "protected_path",
+    );
+  }
+
+  for (const path of [".gitignore", ".github/config", ".gitkeep"]) {
+    assert.doesNotThrow(() => validateCreateRequest({ path, content: "ok" }));
+  }
+  assert.doesNotThrow(() =>
+    validateReadRequest({ items: [{ path: ".GIT/config", full: true }] }),
+  );
+});
+
 test("workspace paths reject absolute, parent, backslash, and empty segments", () => {
   for (const path of [
     "/absolute.txt",
