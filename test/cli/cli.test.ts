@@ -200,6 +200,48 @@ test("CLI rejects lone surrogates before creating a file", async (context) => {
   });
 });
 
+test("CLI rejects case variants of the protected .git path before mutation", async (
+  context,
+) => {
+  const root = await createRoot(context);
+  await mkdir(join(root, ".git"));
+  await writeFile(join(root, ".git", "config"), "original");
+
+  for (const [operation, request] of [
+    ["create", { path: ".GIT/new.txt", content: "blocked" }],
+    [
+      "update",
+      {
+        path: ".GiT/config",
+        expectedRevision: rawByteRevision(Buffer.from("original")),
+        change: { type: "replace", content: "blocked" },
+      },
+    ],
+    [
+      "delete",
+      {
+        path: ".gIt/config",
+        expectedRevision: rawByteRevision(Buffer.from("original")),
+      },
+    ],
+  ] as const) {
+    const execution = await executeCli(
+      [operation, "--root", root, "--json"],
+      jsonBytes(request),
+      root,
+    );
+    const response = JSON.parse(Buffer.from(execution.stdout).toString("utf8"));
+    assert.equal(execution.exitCode, CLI_EXIT.requestError);
+    assert.equal(response.status, "failed");
+    assert.equal(response.diagnostics[0].code, "protected_path");
+  }
+
+  assert.equal(await readFile(join(root, ".git", "config"), "utf8"), "original");
+  await assert.rejects(readFile(join(root, ".git", "new.txt")), {
+    code: "ENOENT",
+  });
+});
+
 test("CLI encode diagnostics include the failing character offset", async (
   context,
 ) => {

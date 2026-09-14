@@ -232,6 +232,12 @@ match.
 were examined. It does not mean that all source content within a matched file
 was examined, or that every requested record was delivered.
 
+If workspace traversal reports a `source_error`, candidate discovery is
+incomplete even when the file-visit limit was not reached. The search summary
+must then set `scanComplete` to `false` and expose lower-bound totals; facet
+records must set `exact` to `false`. A diagnostic omitted by the diagnostic
+limit still affects this completeness decision.
+
 The projections have deliberately different traversal behavior:
 
 - `matches` stops the whole traversal when the global match-record or output
@@ -1019,6 +1025,8 @@ The workspace root is configured by the CLI or server host.
 - Symlinks are not followed.
 - Only regular files are readable or mutable as file items.
 - `.git/**` mutation is prohibited.
+- A mutation path whose first segment is `.git` is prohibited without regard
+  to ASCII letter case (for example, `.GIT/config` and `.GiT/config`).
 
 The core enforces containment. The Agent Skill must not rely on prompt-only
 consent as a filesystem security boundary.
